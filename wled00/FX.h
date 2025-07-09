@@ -340,8 +340,9 @@
 #define FX_MODE_BLACK_HOLE_6           210
 #define FX_MODE_BLACK_HOLE_9           211
 #define FX_MODE_BLACK_HOLE_15          212
+#define FX_MODE_BLACK_HOLE_CUSTOM      213
 
-#define MODE_COUNT                     213
+#define MODE_COUNT                     214
 
 typedef enum mapping1D2D {
   M12_Pixels = 0,
