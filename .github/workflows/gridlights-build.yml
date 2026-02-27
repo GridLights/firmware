@@ -58,7 +58,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.environment }}
-          path: |
-            build_output/firmware/*.bin
-            build_output/firmware/*.gz
-          if-no-files-found: ignore
+          path: .pio/build/${{ matrix.environment }}/firmware.bin
+          if-no-files-found: error
