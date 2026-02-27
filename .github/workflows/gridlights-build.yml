@@ -1,0 +1,63 @@
+name: GridLights Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: Build (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - esp32dev
+          # Add more GridLights target environments here as needed
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache PlatformIO toolchains and packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-platformio-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-platformio-
+
+      - name: Cache .pio build directory
+        uses: actions/cache@v4
+        with:
+          path: .pio
+          key: ${{ runner.os }}-pio-${{ matrix.environment }}-${{ hashFiles('platformio.ini', 'wled00/**') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-${{ matrix.environment }}-
+
+      - name: Install PlatformIO
+        run: pip install -r requirements.txt
+
+      - name: Build ${{ matrix.environment }}
+        run: pio run -e ${{ matrix.environment }}
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.environment }}
+          path: |
+            build_output/firmware/*.bin
+            build_output/firmware/*.gz
+          if-no-files-found: ignore
