@@ -7877,8 +7877,9 @@ uint16_t mode_custom_diamond_spin() {
     currentFrame = (currentFrame + 1) % frameCount;
   }
   
-  // Map intensity slider to pulse frequency (0-50 Hz)
-  uint16_t pulseFrequency = map(SEGMENT.intensity, 0, 255, 0, 50);
+  // Max achievable strobe frequency is half the actual frame rate (one toggle per call)
+  uint16_t maxFreq = 500 / strip.getFrameTime();
+  uint16_t pulseFrequency = map(SEGMENT.intensity, 0, 255, 0, maxFreq);
   
   // Handle strobe timing
   if (pulseFrequency > 0) {
