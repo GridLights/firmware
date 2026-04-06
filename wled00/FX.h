@@ -993,7 +993,7 @@ class WS2812FX {
     uint8_t getFirstSelectedSegId() const;
     uint8_t getLastActiveSegmentId() const;
     uint8_t getActiveSegsLightCapabilities(bool selectedOnly = false) const;
-    uint8_t addEffect(uint8_t id, mode_ptr mode_fn, const char *mode_name);         // add effect to the list; defined in FX.cpp;
+    uint16_t addEffect(uint16_t id, mode_ptr mode_fn, const char *mode_name);        // add effect to the list; defined in FX.cpp;
 
     inline uint8_t getBrightness() const    { return _brightness; }       // returns current strip brightness
     inline static constexpr unsigned getMaxSegments() { return MAX_NUM_SEGMENTS; }  // returns maximum number of supported segments (fixed value)
@@ -1001,7 +1001,7 @@ class WS2812FX {
     inline uint8_t getCurrSegmentId() const { return _segment_index; }    // returns current segment index (only valid while strip.isServicing())
     inline uint8_t getMainSegmentId() const { return _mainSegment; }      // returns main segment index
     inline uint8_t getTargetFps() const     { return _targetFps; }        // returns rough FPS value for las 2s interval
-    inline uint8_t getModeCount() const     { return _modeCount; }        // returns number of registered modes/effects
+    inline uint16_t getModeCount() const    { return _modeCount; }        // returns number of registered modes/effects
 
     uint16_t getLengthPhysical() const;
     uint16_t getLengthTotal() const; // will include virtual/nonexistent pixels in matrix
@@ -1101,7 +1101,7 @@ class WS2812FX {
     uint8_t _segment_index;
     uint8_t _mainSegment;
 
-    uint8_t                  _modeCount;
+    uint16_t                 _modeCount;
     std::vector<mode_ptr>    _mode;     // SRAM footprint: 4 bytes per element
     std::vector<const char*> _modeData; // mode (effect) name and its slider control data array
 

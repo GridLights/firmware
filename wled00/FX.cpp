@@ -7868,7 +7868,7 @@ const uint8_t frame2[] = {
   1, 1, 1, 1, 1, 1, 1, 1,
 };
 
-uint16_t mode_custom_shapes(const Frame frames[], uint16_t frameCount) {
+void mode_custom_shapes(const Frame frames[], uint16_t frameCount) {
     static uint32_t lastFrameTime = 0;
     static uint8_t currentFrame = 0;
     static uint32_t lastStrobeTime = 0; // Tracks strobe toggling
@@ -7884,7 +7884,7 @@ uint16_t mode_custom_shapes(const Frame frames[], uint16_t frameCount) {
 
     // Validate input parameters
     if (!frames || frameCount == 0) {
-        return FRAMETIME;
+        return;
     }
 
     // Validate frame count and current frame
@@ -7926,7 +7926,7 @@ uint16_t mode_custom_shapes(const Frame frames[], uint16_t frameCount) {
     const uint8_t *currentColors = frame.data;
     uint32_t patternSize = (uint32_t)frame.width * frame.height;
     if (patternSize == 0 || patternSize > 10000) { // Reasonable upper limit
-        return FRAMETIME;
+        return;
     }
 
     // Get primary color
@@ -7954,10 +7954,10 @@ uint16_t mode_custom_shapes(const Frame frames[], uint16_t frameCount) {
         }
     }
 
-    return FRAMETIME;
+    return;
 }
 
-uint16_t mode_hertz_testing() {
+void mode_hertz_testing() {
     // Hardware-reliable frequency steps (tested up to 20Hz)
     // Focus on physiologically useful frequencies for closed-eye effects
     const uint16_t frequencies[] = {
@@ -8006,10 +8006,10 @@ uint16_t mode_hertz_testing() {
         SEGMENT.setPixelColor(i, color);
     }
     
-    return FRAMETIME;
+    return;
 }
 
-uint16_t mode_high_frequency_test() {
+void mode_high_frequency_test() {
     // Dedicated high-frequency testing (25-50Hz)
     // Minimal processing for maximum performance
     const uint16_t highFreqs[] = { 25, 30, 40, 50 };
@@ -8037,7 +8037,7 @@ uint16_t mode_high_frequency_test() {
         SEGMENT.setPixelColor(i, color);
     }
     
-    return FRAMETIME;
+    return;
 }
 
 // uint16_t mode_custom_shapes(const Frame frames[], uint16_t frameCount) {
@@ -8119,12 +8119,12 @@ uint16_t mode_high_frequency_test() {
 //     }
 //   }
 
-//   return FRAMETIME;
+//   return;
 // }
 // Metadata for the custom effect
 static const char _data_FX_MODE_CUSTOM[] PROGMEM = "Custom Squares@!,!,,,,Smooth;;!";
 
-uint16_t mode_custom_squares() {
+void mode_custom_squares() {
   const Frame sframes[] = {
     { frame0, 8, 8, 2000, 5, 255 },  // 8x8 pattern, 2s base duration, 5Hz base pulse, full brightness
     { frame1, 8, 8, 3000, 3, 255 },  // 8x8 pattern, 3s base duration, 3Hz base pulse, full brightness
@@ -8202,7 +8202,7 @@ const uint8_t dsframe5[] = {
         0, 0, 0, 0,
 };
 
-uint16_t mode_custom_diamond_spin() {
+void mode_custom_diamond_spin() {
   static uint32_t lastFrameTime = 0;
   static uint8_t currentFrame = 0;
   static uint32_t lastStrobeTime = 0;
@@ -8264,7 +8264,7 @@ uint16_t mode_custom_diamond_spin() {
     }
   }
   
-  return FRAMETIME;
+  return;
 }
 
 // Metadata for the custom effect
@@ -8354,7 +8354,7 @@ const uint8_t dframe7[] = {
         0, 0, 0, 0,
 };
 
-uint16_t mode_custom_drunk_diamond_spin() {
+void mode_custom_drunk_diamond_spin() {
   const Frame dframes[] = {
     { dframe0, 37, 1, 2000, 10, 255 },  // 39 element pattern, 2s base duration, 10Hz base pulse, full brightness
     { dframe1, 37, 1, 500, 6, 255 },    // 39 element pattern, 0.5s base duration, 6Hz base pulse, full brightness
@@ -8403,7 +8403,7 @@ const uint8_t bframe2[] = {
      1, 0, 0, 1
 };
 
-uint16_t mode_custom_ben() {
+void mode_custom_ben() {
   const Frame bframes[] = {
     { bframe0, 37, 1, 4000, 1, 255 },  // 35 element pattern, 4s base duration, 1Hz pulse, full brightness
     { bframe1, 37, 1, 4000, 5, 255 },   // 35 element pattern, 4s base duration, 5Hz pulse, full brightness
@@ -8488,7 +8488,7 @@ const uint8_t novas_frame6[] = {
         1, 1, 1, 1
 };
 
-uint16_t mode_custom_novas() {
+void mode_custom_novas() {
   // Extended sequence with varying durations and Hz values
   const Frame novasFrames[] = {
     // First section: 5 seconds, 30Hz (13 frames)
@@ -8570,7 +8570,7 @@ uint16_t mode_custom_novas() {
 static const char _data_FX_MODE_CUSTOM_NOVAS[] PROGMEM = "Novas@Speed,!,,,,Smooth;;!";
 
 // NOVAS (3-9 Hz) EFFECT - Same pattern with different Hz values
-uint16_t mode_custom_novas_3_9hz() {
+void mode_custom_novas_3_9hz() {
   // Extended sequence with 3-9 Hz frequency range
   const Frame novasFrames[] = {
     // First section: 5 seconds, 3Hz (13 frames)
@@ -8639,7 +8639,7 @@ uint16_t mode_custom_novas_3_9hz() {
 static const char _data_FX_MODE_CUSTOM_NOVAS_3_9HZ[] PROGMEM = "Novas (3-9 Hz)@Speed,!,,,,Smooth;;!";
 
 // NOVAS (3-9 Hz, Inverted Time) EFFECT - Inverted time progression
-uint16_t mode_custom_novas_inverted() {
+void mode_custom_novas_inverted() {
   const Frame novasFrames[] = {
     // First section: 15 seconds, 3Hz (13 frames)
     { novas_frame0, 37, 1, 15000, 3, 255 },
@@ -8778,7 +8778,7 @@ const uint8_t blackhole_frame6[] = {
         1, 1, 1, 1
 };
 
-uint16_t mode_black_hole() {
+void mode_black_hole() {
   const Frame pulseFrames[] = {
     // First section: 10 seconds, 6Hz (6 frames)
     { blackhole_frame0, 37, 1, 10000, 6, 255 },
@@ -8875,7 +8875,7 @@ uint16_t mode_black_hole() {
 static const char _data_FX_MODE_BLACK_HOLE[] PROGMEM = "Black Hole@Speed,!,,,,Smooth;;!";
 
 // BLACK HOLE 3 EFFECT - Constant 3Hz frequency version
-uint16_t mode_black_hole_3() {
+void mode_black_hole_3() {
   const Frame blackhole3Frames[] = {
     // First section: 5 seconds, 3Hz (37 frames)
     { blackhole_frame0, 37, 1, 5000, 3, 255 },
@@ -8923,7 +8923,7 @@ uint16_t mode_black_hole_3() {
 static const char _data_FX_MODE_BLACK_HOLE_3[] PROGMEM = "Black Hole 3@Speed,!,,,,Smooth;;!";
 
 // BLACK HOLE 6 EFFECT - Constant 6Hz frequency version
-uint16_t mode_black_hole_6() {
+void mode_black_hole_6() {
   const Frame blackhole6Frames[] = {
     // First section: 5 seconds, 6Hz (37 frames)
     { blackhole_frame0, 37, 1, 5000, 6, 255 },
@@ -9004,7 +9004,7 @@ uint16_t mode_black_hole_6() {
 static const char _data_FX_MODE_BLACK_HOLE_6[] PROGMEM = "Black Hole 6@Speed,!,,,,Smooth;;!";
 
 // BLACK HOLE 9 EFFECT - Variable frequency version (10Hz->15Hz->20Hz->30Hz->20Hz)
-uint16_t mode_black_hole_9() {
+void mode_black_hole_9() {
   const Frame blackhole9Frames[] = {
     // First section: 5 seconds, 10Hz (13 frames)
     { blackhole_frame0, 37, 1, 5000, 10, 255 },
@@ -9092,7 +9092,7 @@ uint16_t mode_black_hole_9() {
 static const char _data_FX_MODE_BLACK_HOLE_9[] PROGMEM = "Black Hole 9@Speed,!,,,,Smooth;;!";
 
 // BLACK HOLE 15 EFFECT - Variable frequency version (10Hz->15Hz->20Hz->30Hz->20Hz)
-uint16_t mode_black_hole_15() {
+void mode_black_hole_15() {
   const Frame blackhole15Frames[] = {
     // First section: 5 seconds, 10Hz (13 frames)
     { blackhole_frame0, 37, 1, 5000, 10, 255 },
@@ -9180,7 +9180,7 @@ uint16_t mode_black_hole_15() {
 static const char _data_FX_MODE_BLACK_HOLE_15[] PROGMEM = "Black Hole 15@Speed,!,,,,Smooth;;!";
 
 // BLACK HOLE CUSTOM - User-controllable speed and frequency
-uint16_t mode_black_hole_custom() {
+void mode_black_hole_custom() {
   static uint32_t lastFrameTime = 0;
   static uint8_t currentFrame = 0;
   static uint32_t lastStrobeTime = 0;
@@ -9244,7 +9244,7 @@ uint16_t mode_black_hole_custom() {
     }
   }
   
-  return FRAMETIME;
+  return;
 }
 
 // Metadata for Black Hole Custom effect
@@ -9291,7 +9291,7 @@ const uint8_t square3[] = {
   1, 1, 1, 1, 1, 1, 1, 1,
 };
 
-uint16_t mode_breathing_square() {
+void mode_breathing_square() {
   const Frame breathFrames[] = {
     { square1, 8, 8, 800, 0, 255 },   // Small center square, 0.8s duration, full brightness
     { square2, 8, 8, 600, 0, 255 },   // Medium square, 0.6s duration, full brightness
@@ -9347,7 +9347,7 @@ const uint8_t spiral4[] = {
   0, 0, 1, 0, 0, 0, 0, 0,
 };
 
-uint16_t mode_spiral_wave() {
+void mode_spiral_wave() {
   const Frame spiralFrames[] = {
     { spiral1, 8, 8, 200, 0, 255 },   // Fast rotation, 0.2s per frame, full brightness
     { spiral2, 8, 8, 200, 0, 255 },   // full brightness
@@ -9389,7 +9389,7 @@ const uint8_t cross3[] = {
   1, 1, 1, 1, 1, 1, 1,
 };
 
-uint16_t mode_pulsing_cross() {
+void mode_pulsing_cross() {
   const Frame crossFrames[] = {
     { cross1, 7, 7, 600, 0, 255 },    // Thin cross, 0.6s duration, full brightness
     { cross2, 7, 7, 400, 0, 255 },    // Thick cross, 0.4s duration, full brightness
@@ -9434,7 +9434,7 @@ const uint8_t stripe3[] = {
   0, 0, 0, 0, 0, 0, 0, 0,
 };
 
-uint16_t mode_moving_stripes() {
+void mode_moving_stripes() {
   const Frame stripeFrames[] = {
     { stripe1, 8, 8, 300, 0, 255 },   // Pattern 1, 0.3s duration, full brightness
     { stripe2, 8, 8, 300, 0, 255 },   // Pattern 2, 0.3s duration, full brightness
@@ -9467,7 +9467,7 @@ const uint8_t corner2[] = {
   0, 0, 0, 0, 0, 0, 0, 0,
 };
 
-uint16_t mode_corner_flash() {
+void mode_corner_flash() {
   const Frame cornerFrames[] = {
     { corner1, 8, 8, 150, 0, 255 },   // Corners lit, fast 0.15s duration, full brightness
     { corner2, 8, 8, 150, 0, 255 },   // Center lit, fast 0.15s duration, full brightness
@@ -9543,23 +9543,23 @@ const uint8_t aSimplestar120[] = {
   0,1,0,1,0,
   1,0,0,1
 };
-uint16_t mode_aSimplestar3() {
+void mode_aSimplestar3() {
   const Frame frames[] = { { aSimplestar30,  37, 1, 60,  3, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aSimplestar6() {
+void mode_aSimplestar6() {
   const Frame frames[] = { { aSimplestar60,  37, 1, 60,  6, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aSimplestar9() {
+void mode_aSimplestar9() {
   const Frame frames[] = { { aSimplestar90,  37, 1, 60,  9, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aSimplestar12() {
+void mode_aSimplestar12() {
   const Frame frames[] = { { aSimplestar120, 37, 1, 60, 12, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aSIMPLESTAR20() {
+void mode_aSIMPLESTAR20() {
   const Frame frames[] = { { aSIMPLESTAR200, 37, 1, 60, 20, 255 } };
   return mode_custom_shapes(frames, 1);
 }
@@ -9615,23 +9615,23 @@ const uint8_t aFull200[] = {
   0,0,1,0,0,
   0,0,0,0
 };
-uint16_t mode_aFull3() {
+void mode_aFull3() {
   const Frame frames[] = { { aFull30,  37, 1, 60,  3, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aFull6() {
+void mode_aFull6() {
   const Frame frames[] = { { aFull60,  37, 1, 60,  6, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aFull9() {
+void mode_aFull9() {
   const Frame frames[] = { { aFull90,  37, 1, 60,  9, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aFull12() {
+void mode_aFull12() {
   const Frame frames[] = { { aFull120, 37, 1, 60, 12, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aFull20() {
+void mode_aFull20() {
   const Frame frames[] = { { aFull200, 37, 1, 60, 20, 255 } };
   return mode_custom_shapes(frames, 1);
 }
@@ -9687,23 +9687,23 @@ const uint8_t aMerkabah200[] = {
   0,0,1,0,0,
   0,0,0,0
 };
-uint16_t mode_aMerkabah3() {
+void mode_aMerkabah3() {
   const Frame frames[] = { { aMerkabah30,  37, 1, 60,  3, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aMerkabah6() {
+void mode_aMerkabah6() {
   const Frame frames[] = { { aMerkabah60,  37, 1, 60,  6, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aMerkabah9() {
+void mode_aMerkabah9() {
   const Frame frames[] = { { aMerkabah90,  37, 1, 60,  9, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aMerkabah12() {
+void mode_aMerkabah12() {
   const Frame frames[] = { { aMerkabah120, 37, 1, 60, 12, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aMerkabah20() {
+void mode_aMerkabah20() {
   const Frame frames[] = { { aMerkabah200, 37, 1, 60, 20, 255 } };
   return mode_custom_shapes(frames, 1);
 }
@@ -9759,23 +9759,23 @@ const uint8_t aSidewaysMerkabah200[] = {
   0,1,0,1,0,
   0,0,0,0
 };
-uint16_t mode_aSidewaysMerkabah3() {
+void mode_aSidewaysMerkabah3() {
   const Frame frames[] = { { aSidewaysMerkabah30,  37, 1, 60,  3, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aSidewaysMerkabah6() {
+void mode_aSidewaysMerkabah6() {
   const Frame frames[] = { { aSidewaysMerkabah60,  37, 1, 60,  6, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aSidewaysMerkabah9() {
+void mode_aSidewaysMerkabah9() {
   const Frame frames[] = { { aSidewaysMerkabah90,  37, 1, 60,  9, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aSidewaysMerkabah12() {
+void mode_aSidewaysMerkabah12() {
   const Frame frames[] = { { aSidewaysMerkabah120, 37, 1, 60, 12, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aSidewaysMerkabah20() {
+void mode_aSidewaysMerkabah20() {
   const Frame frames[] = { { aSidewaysMerkabah200, 37, 1, 60, 20, 255 } };
   return mode_custom_shapes(frames, 1);
 }
@@ -9831,23 +9831,23 @@ const uint8_t aHourglass200[] = {
   0,1,1,1,0,
   1,1,1,1
 };
-uint16_t mode_aHourglass3() {
+void mode_aHourglass3() {
   const Frame frames[] = { { aHourglass30,  37, 1, 60,  3, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aHourglass6() {
+void mode_aHourglass6() {
   const Frame frames[] = { { aHourglass60,  37, 1, 60,  6, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aHourglass9() {
+void mode_aHourglass9() {
   const Frame frames[] = { { aHourglass90,  37, 1, 60,  9, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aHourglass12() {
+void mode_aHourglass12() {
   const Frame frames[] = { { aHourglass120, 37, 1, 60, 12, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aHourglass20() {
+void mode_aHourglass20() {
   const Frame frames[] = { { aHourglass200, 37, 1, 60, 20, 255 } };
   return mode_custom_shapes(frames, 1);
 }
@@ -9903,23 +9903,23 @@ const uint8_t AlmostNuke200[] = {
   0,0,1,0,0,
   0,1,1,0
 };
-uint16_t mode_AlmostNuke3() {
+void mode_AlmostNuke3() {
   const Frame frames[] = { { AlmostNuke30,  37, 1, 60,  3, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_AlmostNuke6() {
+void mode_AlmostNuke6() {
   const Frame frames[] = { { AlmostNuke60,  37, 1, 60,  6, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_AlmostNuke9() {
+void mode_AlmostNuke9() {
   const Frame frames[] = { { AlmostNuke90,  37, 1, 60,  9, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_AlmostNuke12() {
+void mode_AlmostNuke12() {
   const Frame frames[] = { { AlmostNuke120, 37, 1, 60, 12, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_AlmostNuke20() {
+void mode_AlmostNuke20() {
   const Frame frames[] = { { AlmostNuke200, 37, 1, 60, 20, 255 } };
   return mode_custom_shapes(frames, 1);
 }
@@ -9975,23 +9975,23 @@ const uint8_t aNuke200[] = {
   1,1,0,1,1,
   1,0,0,1
 };
-uint16_t mode_aNuke3() {
+void mode_aNuke3() {
   const Frame frames[] = { { aNuke30,  37, 1, 60,  3, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aNuke6() {
+void mode_aNuke6() {
   const Frame frames[] = { { aNuke60,  37, 1, 60,  6, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aNuke9() {
+void mode_aNuke9() {
   const Frame frames[] = { { aNuke90,  37, 1, 60,  9, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aNuke12() {
+void mode_aNuke12() {
   const Frame frames[] = { { aNuke120, 37, 1, 60, 12, 255 } };
   return mode_custom_shapes(frames, 1);
 }
-uint16_t mode_aNuke20() {
+void mode_aNuke20() {
   const Frame frames[] = { { aNuke200, 37, 1, 60, 20, 255 } };
   return mode_custom_shapes(frames, 1);
 }
@@ -10009,7 +10009,7 @@ static const char _data_FX_MODE_ANUKE20[] PROGMEM = "aNuke20@!,!,,,,Smooth;;!";
 // Intensity slider controls flash frequency (0-50Hz)
 
 // Helper function to apply Hz-based flashing to any pattern
-uint16_t mode_pattern_with_hz(const Frame frames[], uint16_t frameCount) {
+void mode_pattern_with_hz(const Frame frames[], uint16_t frameCount) {
     // Get flash frequency from intensity slider (0-50Hz)
     uint16_t flashHz = 0;
     if (SEGMENT.intensity > 0) {
@@ -10031,13 +10031,13 @@ uint16_t mode_pattern_with_hz(const Frame frames[], uint16_t frameCount) {
         for (uint16_t i = 0; i < SEGLEN; i++) {
             SEGMENT.setPixelColor(i, BLACK);
         }
-        return FRAMETIME;
+        return;
     }
     
     // Otherwise, render the pattern normally
     // This code is adapted from mode_custom_shapes with timing fix for high Hz
     if (!frames || frameCount == 0 || frameCount > 255) {
-        return FRAMETIME;
+        return;
     }
     
     if (SEGENV.call == 0) {
@@ -10055,13 +10055,13 @@ uint16_t mode_pattern_with_hz(const Frame frames[], uint16_t frameCount) {
     const Frame &frame = frames[currentFrame];
     if (!frame.data) {
         SEGENV.aux1 = (currentFrame + 1) % frameCount;
-        return FRAMETIME;
+        return;
     }
     
     uint32_t patternSize = (uint32_t)frame.width * frame.height;
     if (patternSize == 0 || patternSize > 10000) {
         SEGENV.aux1 = (currentFrame + 1) % frameCount;
-        return FRAMETIME;
+        return;
     }
     
     // Speed-based timing for pattern animation
@@ -10121,11 +10121,11 @@ uint16_t mode_pattern_with_hz(const Frame frames[], uint16_t frameCount) {
         }
     }
     
-    return FRAMETIME;
+    return;
 }
 
 // 1. BREATHING SQUARE HZ - Breathing square with Hz control
-uint16_t mode_breathing_square_hz() {
+void mode_breathing_square_hz() {
     const Frame breathFrames[] = {
         { square1, 8, 8, 800, 0, 255 },  // full brightness
         { square2, 8, 8, 600, 0, 255 },  // full brightness
@@ -10137,7 +10137,7 @@ uint16_t mode_breathing_square_hz() {
 }
 
 // 2. SPIRAL WAVE HZ - Spiral wave with Hz control
-uint16_t mode_spiral_wave_hz() {
+void mode_spiral_wave_hz() {
     const Frame spiralFrames[] = {
         { spiral1, 8, 8, 200, 0, 255 },  // full brightness
         { spiral2, 8, 8, 200, 0, 255 },  // full brightness
@@ -10149,7 +10149,7 @@ uint16_t mode_spiral_wave_hz() {
 }
 
 // 3. PULSING CROSS HZ - Pulsing cross with Hz control
-uint16_t mode_pulsing_cross_hz() {
+void mode_pulsing_cross_hz() {
     const Frame crossFrames[] = {
         { cross1, 7, 7, 600, 0, 255 },  // full brightness
         { cross2, 7, 7, 400, 0, 255 },  // full brightness
@@ -10161,7 +10161,7 @@ uint16_t mode_pulsing_cross_hz() {
 }
 
 // 4. MOVING STRIPES HZ - Moving stripes with Hz control
-uint16_t mode_moving_stripes_hz() {
+void mode_moving_stripes_hz() {
     const Frame stripeFrames[] = {
         { stripe1, 8, 8, 300, 0, 255 },  // full brightness
         { stripe2, 8, 8, 300, 0, 255 },  // full brightness
@@ -10172,7 +10172,7 @@ uint16_t mode_moving_stripes_hz() {
 }
 
 // 5. CORNER FLASH HZ - Corner flash with Hz control
-uint16_t mode_corner_flash_hz() {
+void mode_corner_flash_hz() {
     const Frame cornerFrames[] = {
         { corner1, 8, 8, 150, 0, 255 },  // full brightness
         { corner2, 8, 8, 150, 0, 255 },  // full brightness
@@ -10182,7 +10182,7 @@ uint16_t mode_corner_flash_hz() {
 }
 
 // STATIC HZ TEST - Pure Hz testing with smooth 0-50Hz control
-uint16_t mode_static_hz_test() {
+void mode_static_hz_test() {
     // Get flash frequency from intensity slider (0-50Hz)
     // Intensity 0 = static on (no flashing)
     // Intensity 255 = 50Hz
@@ -10223,13 +10223,13 @@ uint16_t mode_static_hz_test() {
     }
     
     // Limit pixel count based on frequency for performance
-    uint16_t maxPixels = SEGLEN;
+    unsigned maxPixels = SEGLEN;
     if (flashHz >= 40) {
-        maxPixels = min((uint16_t)100, SEGLEN);  // 40-50Hz: max 100 pixels
+        maxPixels = min(100U, SEGLEN);  // 40-50Hz: max 100 pixels
     } else if (flashHz >= 30) {
-        maxPixels = min((uint16_t)200, SEGLEN);  // 30-40Hz: max 200 pixels
+        maxPixels = min(200U, SEGLEN);  // 30-40Hz: max 200 pixels
     } else if (flashHz >= 20) {
-        maxPixels = min((uint16_t)500, SEGLEN);  // 20-30Hz: max 500 pixels
+        maxPixels = min(500U, SEGLEN);  // 20-30Hz: max 500 pixels
     }
     // Below 20Hz: no limit needed
     
@@ -10243,7 +10243,7 @@ uint16_t mode_static_hz_test() {
         SEGMENT.setPixelColor(i, BLACK);
     }
     
-    return FRAMETIME;
+    return;
 }
 
 // Metadata for static Hz test
@@ -10319,7 +10319,7 @@ const uint8_t cframe5[] = {
   0, 1, 0, 0, 0, 0, 0, 0,
 };
 
-uint16_t mode_custom_circles() {
+void mode_custom_circles() {
   const Frame cframes[] = {
     { cframe0, 8, 8, 2000, 0, 255 },  // 8x8 pattern, 2s base duration, no pulse, full brightness
     { cframe1, 8, 8, 500, 0, 255 },   // 8x8 pattern, 0.5s base duration, no pulse, full brightness
@@ -10367,7 +10367,7 @@ uint16_t mode_custom_circles() {
   //   }
   // }
 
-  // return FRAMETIME;
+  // return;
 }
 // Metadata for the custom effect
 static const char _data_FX_MODE_CIRCLE[] PROGMEM = "Custom Circles@!,!,,,,Smooth;;!";
@@ -13496,22 +13496,22 @@ static const char _data_RESERVED[] PROGMEM = "RSVD";
 // use id==255 to find unallocated gaps (with "Reserved" data string)
 // if vector size() is smaller than id (single) data is appended at the end (regardless of id)
 // return the actual id used for the effect or 255 if the add failed.
-uint8_t WS2812FX::addEffect(uint8_t id, mode_ptr mode_fn, const char *mode_name) {
-  if (id == 255) { // find empty slot
+uint16_t WS2812FX::addEffect(uint16_t id, mode_ptr mode_fn, const char *mode_name) {
+  if (id == 0xFFFF) { // find empty slot
     for (size_t i=1; i<_mode.size(); i++) if (_modeData[i] == _data_RESERVED) { id = i; break; }
   }
   if (id < _mode.size()) {
-    if (_modeData[id] != _data_RESERVED) return 255; // do not overwrite an already added effect
+    if (_modeData[id] != _data_RESERVED) return 0xFFFF; // do not overwrite an already added effect
     _mode[id]     = mode_fn;
     _modeData[id] = mode_name;
     return id;
-  } else if (_mode.size() < 255) { // 255 is reserved for indicating the effect wasn't added
+  } else if (_mode.size() < 0xFFFF) { // 0xFFFF is reserved for indicating the effect wasn't added
     _mode.push_back(mode_fn);
     _modeData.push_back(mode_name);
     if (_modeCount < _mode.size()) _modeCount++;
     return _mode.size() - 1;
   } else {
-    return 255; // The vector is full so return 255
+    return 0xFFFF; // The vector is full
   }
 }
 
