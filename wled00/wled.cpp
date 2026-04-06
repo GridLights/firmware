@@ -683,7 +683,17 @@ void WLED::initConnection()
   ws.onEvent(wsEvent);
   #endif
 
+#ifndef USERMOD_GL_BLE_TEST
   WiFi.disconnect(true);        // close old connections
+  delay(5);                     // wait for hardware to be ready
+#else
+  // BLE usermod manages AP lifecycle — WiFi.disconnect(true) would destroy
+  // the softAP we started in the usermod loop(). Only disconnect if AP not active.
+  if (!apActive) {
+    WiFi.disconnect(true);
+    delay(5);
+  }
+#endif
 #ifdef ESP8266
   WiFi.setPhyMode(force802_3g ? WIFI_PHY_MODE_11G : WIFI_PHY_MODE_11N);
 #endif
@@ -729,7 +739,9 @@ void WLED::initConnection()
   #if defined(LOLIN_WIFI_FIX) && (defined(ARDUINO_ARCH_ESP32C3) || defined(ARDUINO_ARCH_ESP32S2) || defined(ARDUINO_ARCH_ESP32S3))
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
   #endif
-  WiFi.setSleep(!noWifiSleep);
+  #ifndef USERMOD_GL_BLE_TEST
+  WiFi.setSleep(!noWifiSleep);  // Skip when BLE active - pm_set_sleep_type crashes regardless of CONFIG_PM_ENABLE=0
+  #endif
   WiFi.setHostname(hostname);
 #else
   wifi_set_sleep_type((noWifiSleep) ? NONE_SLEEP_T : MODEM_SLEEP_T);
@@ -774,6 +786,10 @@ void WLED::initInterfaces()
   }
   server.begin();
 
+  #ifndef USERMOD_GL_BLE_TEST
+  // When BLE usermod is active, heavy services are started by the usermod itself
+  // after BLE stops (gl_ble_test.h STATE_BLE_STOPPING). Starting them here too
+  // causes double-init which crashes E1.31/DDP and fragments heap.
   if (udpPort > 0 && udpPort != ntpLocalPort) {
     udpConnected = notifierUdp.begin(udpPort);
     if (udpConnected && udpRgbPort != udpPort)
@@ -790,6 +806,7 @@ void WLED::initInterfaces()
 #ifndef WLED_DISABLE_MQTT
   initMqtt();
 #endif
+  #endif  // USERMOD_GL_BLE_TEST
   interfacesInited = true;
   wasConnected = true;
 }
@@ -810,6 +827,8 @@ void WLED::handleConnection()
     return;
   }
 
+#ifndef USERMOD_GL_BLE_TEST
+  // Skip heap reconnect logic when BLE usermod active - it manages connection lifecycle
   // reconnect WiFi to clear stale allocations if heap gets too low
   if (now - heapTime > 5000) {
     uint32_t heap = ESP.getFreeHeap();
@@ -824,6 +843,7 @@ void WLED::handleConnection()
     lastHeap = heap;
     heapTime = now;
   }
+  #endif  // USERMOD_GL_BLE_TEST
 
   byte stac = 0;
   if (apActive) {
@@ -866,6 +886,15 @@ void WLED::handleConnection()
       improvActive = 2;
     }
     if (now - lastReconnectAttempt > ((stac) ? 300000 : 18000) && WLED_WIFI_CONFIGURED) {
+      #ifdef USERMOD_GL_BLE_TEST
+      // Check if BLE usermod has detected auth failure - don't retry if so
+      extern bool gl_ble_wifiAuthFailure;
+      if (gl_ble_wifiAuthFailure) {
+        DEBUG_PRINTLN(F("BLE usermod auth failure - skipping reconnection attempt"));
+        lastReconnectAttempt = now; // Reset timer to prevent spam
+        return;
+      }
+      #endif
       if (improvActive == 2) improvActive = 3;
       DEBUG_PRINTLN(F("Last reconnect too old."));
       initConnection();
