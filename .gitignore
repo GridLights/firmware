@@ -2,12 +2,17 @@
 .clang-format
 .direnv
 .DS_Store
-.gitignore
 .idea
 .pio
 .pioenvs
 .piolibdeps
 .vscode
+compile_commands.json
+__pycache__/
+
+/.dummy
+/dependencies.lock
+/managed_components
 
 esp01-update.sh
 replace_fs.py
@@ -15,6 +20,7 @@ wled-update.sh
 
 /build_output/
 /node_modules/
+/logs/
 
 /wled00/extLibs
 /wled00/LittleFS
@@ -25,3 +31,5 @@ BLE_WIFI_COEXISTENCE_NOTES.md
 MANAGE_LEDS.md
 SPRINT_ROADMAP.md
 .github/copilot-instructions.md
+/wled00/html_*.h
+/wled00/js_*.h
