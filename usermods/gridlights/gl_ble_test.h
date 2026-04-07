@@ -77,9 +77,9 @@ public:
 
         // Detach core WLED button actions (toggle/random/etc.)
         // Keep direct pin read in this usermod for 3s factory reset hold.
-        if (btnPin[0] >= 0) {
-            buttonType[0] = BTN_TYPE_NONE;
-            pinMode(btnPin[0], INPUT_PULLUP);
+        if (!buttons.empty() && buttons[0].pin >= 0) {
+            buttons[0].type = BTN_TYPE_NONE;
+            pinMode(buttons[0].pin, INPUT_PULLUP);
             USER_PRINTLN(F("[BLE Test] Core button actions disabled for button 0"));
         }
 
@@ -144,7 +144,7 @@ public:
                 _savedBri = bri;
                 _savedBriLast = briLast;
                 for (uint8_t i = 0; i < 4; i++) {
-                    _savedCol[i] = col[i];
+                    _savedCol[i] = colPri[i];
                     _savedColSec[i] = colSec[i];
                 }
                 _savedEffectCurrent = effectCurrent;
@@ -161,7 +161,7 @@ public:
             } else if (_bootBlinkOn && millis() >= _bootBlinkAt) {
                 // Keep WHITE as current color/effect, then turn OFF.
                 // This makes subsequent app ON commands come back as white.
-                col[0] = BLINK_WHITE_R; col[1] = BLINK_WHITE_G; col[2] = BLINK_WHITE_B; col[3] = 0;
+                colPri[0] = BLINK_WHITE_R; colPri[1] = BLINK_WHITE_G; colPri[2] = BLINK_WHITE_B; colPri[3] = 0;
                 colSec[0] = BLINK_WHITE_R; colSec[1] = BLINK_WHITE_G; colSec[2] = BLINK_WHITE_B; colSec[3] = 0;
                 effectCurrent = FX_MODE_STATIC;
                 effectPalette = 0;
@@ -209,8 +209,8 @@ public:
         _lastStationCount = stationCount;
         
         // Factory reset: hold button for 3s to clear WiFi credentials
-        if (btnPin[0] >= 0) {
-            if (digitalRead(btnPin[0]) == LOW) {
+        if (!buttons.empty() && buttons[0].pin >= 0) {
+            if (digitalRead(buttons[0].pin) == LOW) {
                 if (!_buttonPressed) {
                     _buttonPressStart = millis();
                     _buttonPressed = true;
@@ -280,7 +280,7 @@ public:
                         // to prevent pm_set_sleep_type crash during BLE coexistence
                         WiFi.disconnect();
                         delay(100);
-                        WiFi.begin(clientSSID, clientPass);
+                        WiFi.begin(multiWiFi[0].clientSSID, multiWiFi[0].clientPass);
                     }
                     // Check for scan request
                     else if (_scanRequested && _bleConnected && !_bleDisconnected &&
@@ -499,14 +499,14 @@ public:
         // AsyncTCP task trips the WDT. Handler sets this flag; we flush here.
         if (_pendingRename) {
             _pendingRename = false;
-            serializeConfig();
+            serializeConfigToFS();
             USER_PRINTF("[BLE] Device rename saved: %s\n", serverDescription);
         }
     } // end loop()
 
     void connected() override {
         // Called when WiFi successfully connects (boot or runtime)
-        USER_PRINTF("[BLE Test] connected() callback - WiFi connected to: %s\n", clientSSID);
+        USER_PRINTF("[BLE Test] connected() callback - WiFi connected to: %s\n", multiWiFi.empty() ? "" : multiWiFi[0].clientSSID);
         _provisioningStarted = true; // Mark that WiFi is working, don't start provisioning
         _bootConnection = false;
         _connectionAttempts = 0;
@@ -612,8 +612,16 @@ private:
     bool _renameRegistered = false;
     volatile bool _pendingRename = false;
 
+    // Ensure multiWiFi has at least one entry to safely write credentials into
+    bool _multiWiFiEnsured() {
+        if (multiWiFi.empty()) {
+            multiWiFi.emplace_back("Your_Network", "");
+        }
+        return true;
+    }
+
     void applyPulseFrame(byte targetBri, byte r, byte g, byte b) {
-        col[0] = r; col[1] = g; col[2] = b; col[3] = 0;
+        colPri[0] = r; colPri[1] = g; colPri[2] = b; colPri[3] = 0;
         colSec[0] = r; colSec[1] = g; colSec[2] = b; colSec[3] = 0;
         effectCurrent = FX_MODE_STATIC;
         bri = targetBri;
@@ -627,14 +635,16 @@ private:
         USER_PRINTLN(F("[BLE Test] Clearing WiFi credentials and resetting device name..."));
 
         // Match existing button-reset behavior exactly
-        strcpy(clientSSID, "Your_Network");
-        memset(clientPass, 0, 65);
+        if (!multiWiFi.empty()) {
+            strlcpy(multiWiFi[0].clientSSID, "Your_Network", 33);
+            memset(multiWiFi[0].clientPass, 0, 65);
+        }
         // Reset device name to default so BLE advertises "Sol Spektrum - Unconfigured" again
         strlcpy(serverDescription, "Sol Spektrum - Unconfigured", 33);
         // SOL-50: Re-apply branded AP credentials so cfg.json doesn't keep stale values
         snprintf(apSSID, sizeof(apSSID), "SolSpektrum-%.4s", escapedMac.c_str());
         strlcpy(apPass, "sol1234", sizeof(apPass));
-        serializeConfig();
+        serializeConfigToFS();
         WiFi.disconnect(true, true);
 
         delay(500);
@@ -657,7 +667,7 @@ private:
                 break;
                 
             case SYSTEM_EVENT_STA_CONNECTED:
-                USER_PRINTF("[BLE Test] WiFi event: STA_CONNECTED to SSID: %s\n", clientSSID);
+                USER_PRINTF("[BLE Test] WiFi event: STA_CONNECTED to SSID: %s\n", multiWiFi.empty() ? "" : multiWiFi[0].clientSSID);
                 _connectionAttempts = 0; // Reset attempt counter on successful connect
                 // Wait for IP assignment before declaring success
                 break;
@@ -710,7 +720,7 @@ private:
                 break;
                 
             case SYSTEM_EVENT_STA_DISCONNECTED: {
-                wifi_err_reason_t reason = (wifi_err_reason_t)info.disconnected.reason;
+                wifi_err_reason_t reason = (wifi_err_reason_t)info.wifi_sta_disconnected.reason;
                 
                 USER_PRINTLN(F("[BLE Test] ========================================"));
                 USER_PRINTF("[BLE Test] WiFi DISCONNECTED event (reason code: %d)\n", reason);
@@ -801,7 +811,7 @@ private:
                             USER_PRINTF("[BLE Test] Too many attempts (%d) - entering provisioning mode\n", _connectionAttempts);
                         }
                         USER_PRINTLN(F("[BLE Test] Could not connect to WiFi - entering provisioning mode"));
-                        USER_PRINTF("[BLE Test] Keeping credentials: SSID='%s' (user can retry via BLE)\n", clientSSID);
+                        USER_PRINTF("[BLE Test] Keeping credentials: SSID='%s' (user can retry via BLE)\n", multiWiFi.empty() ? "" : multiWiFi[0].clientSSID);
                         
                         // Log current WiFi state
                         wifi_mode_t mode = WiFi.getMode();
@@ -1083,13 +1093,15 @@ private:
                         USER_PRINTF("[BLE Test] WiFi Credentials - SSID: %s, PSK: %s\n", ssid.c_str(), psk.c_str());
                         
                         // Save credentials exactly like WLED does
-                        memset(clientSSID, 0, 33);
-                        memset(clientPass, 0, 65);
-                        strlcpy(clientSSID, ssid.c_str(), 33);
-                        strlcpy(clientPass, psk.c_str(), 65);
-                        
-                        // Trigger config save and reconnect (WLED uses these flags)
-                        doSerializeConfig = true;                        
+                        if (_parent->_multiWiFiEnsured()) {
+                            memset(multiWiFi[0].clientSSID, 0, 33);
+                            memset(multiWiFi[0].clientPass, 0, 65);
+                            strlcpy(multiWiFi[0].clientSSID, ssid.c_str(), 33);
+                            strlcpy(multiWiFi[0].clientPass, psk.c_str(), 65);
+                        }
+
+                        // Defer config save to main loop (serializeConfigToFS blocks ~200ms)
+                        _parent->_pendingRename = true;                        
                         USER_PRINTLN(F("[BLE Test] Credentials saved, reconnect scheduled"));
                         
                         // Don't send connecting status - let WiFi events notify success/failure
@@ -1154,5 +1166,9 @@ private:
 };
 
 const char GLBLETestUsermod::_name[] PROGMEM = "BLE_Test";
+
+// Register with the new WLED dynarray usermod system
+static GLBLETestUsermod gl_ble_test_usermod;
+REGISTER_USERMOD(gl_ble_test_usermod);
 
 #endif // USERMOD_GL_BLE_TEST

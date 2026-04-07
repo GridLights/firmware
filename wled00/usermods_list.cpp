@@ -393,7 +393,5 @@ void registerUsermods()
   usermods.add(new StairwayWipeUsermod());
   #endif
 
-  #ifdef USERMOD_GL_BLE_TEST
-  usermods.add(new GLBLETestUsermod());
-  #endif
+  // GLBLETestUsermod registered via REGISTER_USERMOD in gl_ble_test.h
 }
