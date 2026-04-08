@@ -1,12 +1,13 @@
 #pragma once
 
 /*
- * gl_ble_test.h — Simple WiFi/BLE Test Usermod
- * 
- * Clean slate for testing WiFi and BLE interactions
+ * sol_ble.h — SolSpektrum BLE Provisioning & WiFi Management Usermod
+ *
+ * Handles BLE-based WiFi provisioning, WiFi network switching,
+ * AP management, factory reset, and boot LED indication.
  */
 
-#ifdef USERMOD_GL_BLE_TEST
+#ifdef USERMOD_SOL_BLE
 
 #include "wled.h"
 #include <esp_wifi.h>
@@ -21,19 +22,17 @@
   #define USER_PRINTF(...) Serial.printf(__VA_ARGS__)
 #endif
 
-// Comment/uncomment these lines to enable/disable features
-#define ENABLE_WIFI
-#define ENABLE_WIFI_SCAN
-#define ENABLE_BLE
-#define BLE_WAIT_FOR_CONNECTION  // Wait for BLE connect+disconnect before cycling
-// #define BLE_AUTO_DISCONNECT  // Auto-disconnect using WIFI_TOGGLE_INTERVAL timeout
+// BLE_WAIT_FOR_CONNECTION: Keep BLE alive until a client connects and disconnects
+// before cycling back to WiFi. Without this, BLE would restart on a timer.
+#define BLE_WAIT_FOR_CONNECTION
+
 // NimBLE deinit mode:
+// true  = full heap release (reclaims ~40KB, slightly slower deinit)
 // false = stop BLE but keep allocations reserved (faster + safer against WDT)
-// true  = full heap release (can be slower and may increase WDT risk under heavy cycles)
 #define BLE_DEINIT_RELEASE_HEAP true
 
-// Toggle interval in milliseconds
-#define WIFI_TOGGLE_INTERVAL 500
+// State machine tick interval in milliseconds
+#define STATE_MACHINE_TICK_MS 500
 
 // Boot blink tuning
 #define BOOT_BLINK_DELAY_MS 700
@@ -52,12 +51,12 @@
 
 // Global flag for WLED to check before retrying connection
 // Set by BLE usermod on permanent auth failures (wrong password, SSID not found)
-bool gl_ble_wifiAuthFailure = false;
+bool sol_ble_wifiAuthFailure = false;
 // Global flag for WLED to pause reconnect logic while LAN WiFi switch test runs
-bool gl_ble_wifiSwitchInProgress = false;
+bool sol_ble_wifiSwitchInProgress = false;
 
 
-class GLBLETestUsermod : public Usermod {
+class SolBleUsermod : public Usermod {
 public:
     static const char _name[];
 
@@ -68,7 +67,7 @@ public:
         bool doFactoryReset = gl["factory_reset"] | false;
         if (doFactoryReset) {
             _factoryResetRequested = true;
-            USER_PRINTLN(F("[BLE Test] WS command received: gl.factory_reset=true"));
+            USER_PRINTLN(F("[Sol BLE] WS command received: gl.factory_reset=true"));
         }
 
     }
@@ -82,7 +81,7 @@ public:
         if (btnPin[0] >= 0) {
             buttonType[0] = BTN_TYPE_NONE;
             pinMode(btnPin[0], INPUT_PULLUP);
-            USER_PRINTLN(F("[BLE Test] Core button actions disabled for button 0"));
+            USER_PRINTLN(F("[Sol BLE] Core button actions disabled for button 0"));
         }
 
         // Force LED output OFF on boot for test workflow
@@ -92,33 +91,33 @@ public:
         turnOnAtBoot = false;
         stateUpdated(CALL_MODE_INIT);
         _bootOffApplied = true;
-        USER_PRINTLN(F("[BLE Test] Boot policy: LEDs forced OFF"));
+        USER_PRINTLN(F("[Sol BLE] Boot policy: LEDs forced OFF"));
 
         // One-shot boot blink (after boot-off): OFF -> brief ON -> OFF
         _bootBlinkPending = true;
         _bootBlinkOn = false;
         _bootBlinkAt = millis() + BOOT_BLINK_DELAY_MS;
-        USER_PRINTLN(F("[BLE Test] Boot blink scheduled"));
+        USER_PRINTLN(F("[Sol BLE] Boot blink scheduled"));
         
         // Reset global WiFi guard flags on boot
-        gl_ble_wifiAuthFailure = false;
-        gl_ble_wifiSwitchInProgress = false;
+        sol_ble_wifiAuthFailure = false;
+        sol_ble_wifiSwitchInProgress = false;
         
         // Disable WLED's automatic AP restart - usermod handles AP lifecycle
         apBehavior = AP_BEHAVIOR_BUTTON_ONLY;
-        USER_PRINTLN(F("[BLE Test] Set apBehavior=BUTTON_ONLY (usermod controls AP)"));
+        USER_PRINTLN(F("[Sol BLE] Set apBehavior=BUTTON_ONLY (usermod controls AP)"));
 
         // SOL-50: Brand AP SSID as "<WLED_AP_SSID>-XXXX" (first 4 hex chars of MAC)
         // escapedMac is "AABBCCDDEEFF" — take first 4 chars for short unique suffix
         snprintf(apSSID, sizeof(apSSID), WLED_AP_SSID "-%.4s", escapedMac.c_str());
         strlcpy(apPass, WLED_AP_PASS, sizeof(apPass));
-        USER_PRINTF("[BLE Test] AP SSID: %s\n", apSSID);
+        USER_PRINTF("[Sol BLE] AP SSID: %s\n", apSSID);
         
         // Register WiFi event handler for connection events
         WiFi.onEvent([this](WiFiEvent_t event, WiFiEventInfo_t info) {
             this->handleWiFiEvent(event, info);
         });
-        USER_PRINTLN(F("[BLE Test] WiFi event handler registered"));
+        USER_PRINTLN(F("[Sol BLE] WiFi event handler registered"));
         
         // Prevent WLED's handleConnection() from calling initConnection() immediately.
         // initConnection() calls WiFi.disconnect(true) which would destroy our softAP
@@ -129,14 +128,14 @@ public:
 
         // Start in IDLE state - wait for WLED to attempt WiFi connection
         _state = STATE_IDLE;
-        USER_PRINTLN(F("[BLE Test] Waiting for WLED WiFi connection attempt..."));
+        USER_PRINTLN(F("[Sol BLE] Waiting for WLED WiFi connection attempt..."));
     }
 
     void loop() override {
         // App-triggered factory reset command (WS/JSON)
         if (_factoryResetRequested) {
             _factoryResetRequested = false;
-            performFactoryReset("[BLE Test] Factory reset triggered via WS command");
+            performFactoryReset("[Sol BLE] Factory reset triggered via WS command");
             return;
         }
 
@@ -160,7 +159,7 @@ public:
 
                 _bootBlinkOn = true;
                 _bootBlinkAt = millis() + BOOT_BLINK_ON_MS;
-                USER_PRINTLN(F("[BLE Test] Boot blink ON (white)"));
+                USER_PRINTLN(F("[Sol BLE] Boot blink ON (white)"));
             } else if (_bootBlinkOn && millis() >= _bootBlinkAt) {
                 // Keep WHITE as current color/effect, then turn OFF.
                 // This makes subsequent app ON commands come back as white.
@@ -175,7 +174,7 @@ public:
                 colorUpdated(CALL_MODE_NO_NOTIFY);
                 _bootBlinkPending = false;
                 _bootOffReasserted = true; // final OFF state already applied
-                USER_PRINTLN(F("[BLE Test] Boot blink OFF"));
+                USER_PRINTLN(F("[Sol BLE] Boot blink OFF"));
             }
         }
 
@@ -185,7 +184,7 @@ public:
             bri = 0;
             stateUpdated(CALL_MODE_INIT);
             _bootOffReasserted = true;
-            USER_PRINTLN(F("[BLE Test] Reasserted OFF state after boot"));
+            USER_PRINTLN(F("[Sol BLE] Reasserted OFF state after boot"));
         }
 
         // Monitor AP connections for mutual exclusion with BLE
@@ -198,14 +197,14 @@ public:
         
         // AP client connects → stop BLE (mutual exclusion)
         if (_state == STATE_BLE_WAITING && stationCount > 0 && _lastStationCount == 0) {
-            USER_PRINTF("[BLE Test] AP client connecting! Stopping BLE. Heap: %d bytes\n", ESP.getFreeHeap());
+            USER_PRINTF("[Sol BLE] AP client connecting! Stopping BLE. Heap: %d bytes\n", ESP.getFreeHeap());
             _state = STATE_BLE_STOPPING;
         }
         
         // AP client disconnects → restart BLE if WiFi not connected
         if (stationCount == 0 && _lastStationCount > 0 && !WLED_CONNECTED && 
             (_state == STATE_IDLE || _state == STATE_BLE_STOPPING)) {
-            USER_PRINTLN(F("[BLE Test] AP client disconnected, restarting BLE..."));
+            USER_PRINTLN(F("[Sol BLE] AP client disconnected, restarting BLE..."));
             _state = STATE_BLE_STARTING;
         }
         
@@ -217,34 +216,34 @@ public:
                 if (!_buttonPressed) {
                     _buttonPressStart = millis();
                     _buttonPressed = true;
-                    USER_PRINTLN(F("[BLE Test] Button pressed, hold for 3s to factory reset..."));
+                    USER_PRINTLN(F("[Sol BLE] Button pressed, hold for 3s to factory reset..."));
                 } else if (millis() - _buttonPressStart > 3000) {
-                    performFactoryReset("[BLE Test] Factory reset triggered via button hold");
+                    performFactoryReset("[Sol BLE] Factory reset triggered via button hold");
                 }
             } else {
                 if (_buttonPressed && millis() - _buttonPressStart < 3000) {
-                    USER_PRINTLN(F("[BLE Test] Button released, reset cancelled"));
+                    USER_PRINTLN(F("[Sol BLE] Button released, reset cancelled"));
                 }
                 _buttonPressed = false;
             }
         }
         
         // State machine with timing
-        if (millis() - _lastToggle > WIFI_TOGGLE_INTERVAL) {
+        if (millis() - _lastToggle > STATE_MACHINE_TICK_MS) {
             _lastToggle = millis();
 
             // Allow WiFi event handler to request provisioning transition from any state.
             // Keep this in loop() (not event callback) to avoid blocking the WiFi event task.
             if (_enterProvisioningMode && _state != STATE_ENTERING_PROVISIONING) {
-                USER_PRINTLN(F("[BLE Test] Provisioning flag set, transitioning to STATE_ENTERING_PROVISIONING"));
+                USER_PRINTLN(F("[Sol BLE] Provisioning flag set, transitioning to STATE_ENTERING_PROVISIONING"));
                 _provisioningPhase = 0;
                 _state = STATE_ENTERING_PROVISIONING;
             }
             
             switch (_state) {
                 case STATE_BLE_STARTING: {
-                    USER_PRINTLN(F("[BLE Test] Starting BLE..."));
-                    USER_PRINTF("[BLE Test] Heap before: %d bytes\n", ESP.getFreeHeap());
+                    USER_PRINTLN(F("[Sol BLE] Starting BLE..."));
+                    USER_PRINTF("[Sol BLE] Heap before: %d bytes\n", ESP.getFreeHeap());
                     NimBLEDevice::init(serverDescription);  // uses WLED's stored name (default: 'Sol Spektrum - Unconfigured')
 
                     // Create fresh server/service/characteristic on each BLE start.
@@ -260,7 +259,7 @@ public:
                     );
                     _echoChar->setCallbacks(new CharCallbacks(this));
                     service->start();
-                    USER_PRINTLN(F("[BLE Test] BLE server/service created"));
+                    USER_PRINTLN(F("[Sol BLE] BLE server/service created"));
 
                     // Reset characteristic value to ready on every start
                     String readyJson = "{\"status\":\"ready\"}";
@@ -270,9 +269,9 @@ public:
                     NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
                     pAdvertising->addServiceUUID(BLE_SERVICE_UUID);
                     pAdvertising->start();
-                    USER_PRINTF("[BLE Test] BLE started. Heap: %d bytes\n", ESP.getFreeHeap());
+                    USER_PRINTF("[Sol BLE] BLE started. Heap: %d bytes\n", ESP.getFreeHeap());
 #ifdef BLE_WAIT_FOR_CONNECTION
-                    USER_PRINTLN(F("[BLE Test] Waiting for BLE connection..."));
+                    USER_PRINTLN(F("[Sol BLE] Waiting for BLE connection..."));
                     _bleConnected = false;
                     _bleDisconnected = false;
                     _state = STATE_BLE_WAITING;
@@ -291,8 +290,8 @@ public:
                         _authFailure = false;
                         _bootConnection = false; // This is BLE provisioning, not boot
                         _connectionAttempts = 0;
-                        gl_ble_wifiAuthFailure = false; // Clear global flag for new connection attempt
-                        // Note: WLED's WiFi.setSleep() is disabled via USERMOD_GL_BLE_TEST flag
+                        sol_ble_wifiAuthFailure = false; // Clear global flag for new connection attempt
+                        // Note: WLED's WiFi.setSleep() is disabled via USERMOD_SOL_BLE flag
                         // to prevent pm_set_sleep_type crash during BLE coexistence
                         WiFi.disconnect();
                         delay(100);
@@ -301,7 +300,7 @@ public:
                     // Check for scan request
                     else if (_scanRequested && _bleConnected && !_bleDisconnected &&
                         _bleServer != nullptr && _connHandle != BLE_HS_CONN_HANDLE_NONE) {
-                        USER_PRINTLN(F("[BLE Test] Disconnecting to perform WiFi scan..."));
+                        USER_PRINTLN(F("[Sol BLE] Disconnecting to perform WiFi scan..."));
                         uint16_t handle = _connHandle;
                         _connHandle = BLE_HS_CONN_HANDLE_NONE;
                         _bleServer->disconnect(handle);
@@ -309,29 +308,14 @@ public:
                     }
                     // Wait for disconnection to complete cycle
                     else if (_bleDisconnected) {
-                        USER_PRINTLN(F("[BLE Test] BLE connect/disconnect cycle complete"));
+                        USER_PRINTLN(F("[Sol BLE] BLE connect/disconnect cycle complete"));
                         _state = STATE_BLE_STOPPING;
                     }
-#ifdef BLE_AUTO_DISCONNECT
-                    // Auto-disconnect after toggle interval
-                    else if (_bleConnected && !_bleDisconnected && 
-                             _bleServer != nullptr &&
-                             _connHandle != BLE_HS_CONN_HANDLE_NONE &&
-                             millis() - _bleConnectTime > WIFI_TOGGLE_INTERVAL) {
-                        USER_PRINTF("[BLE Test] Auto-disconnecting after %dms timeout\n", WIFI_TOGGLE_INTERVAL);
-                        uint16_t handle = _connHandle;
-                        _connHandle = BLE_HS_CONN_HANDLE_NONE;  // prevent repeated terminate attempts
-                        bool ok = _bleServer->disconnect(handle);
-                        if (!ok) {
-                            USER_PRINTLN(F("[BLE Test] Disconnect request failed or already disconnected"));
-                        }
-                    }
-#endif
                     break;
                     
                 case STATE_BLE_STOPPING:
-                    USER_PRINTLN(F("[BLE Test] Stopping BLE..."));
-                    USER_PRINTF("[BLE Test] Heap before: %d bytes\n", ESP.getFreeHeap());
+                    USER_PRINTLN(F("[Sol BLE] Stopping BLE..."));
+                    USER_PRINTF("[Sol BLE] Heap before: %d bytes\n", ESP.getFreeHeap());
                     // NimBLEDevice::deinit() blocks the CPU for hundreds of ms.
                     // The TWDT monitors IDLE0 and IDLE1 by default — they can't run
                     // while we're blocked, so their WDT window expires and the ISR fires
@@ -367,14 +351,14 @@ public:
                         _connectRequested = false; // Clear if still set
                     }
                     
-                    USER_PRINTF("[BLE Test] BLE stopped. Heap: %d bytes\n", ESP.getFreeHeap());
+                    USER_PRINTF("[Sol BLE] BLE stopped. Heap: %d bytes\n", ESP.getFreeHeap());
                     
                     // Only restart BLE if WiFi not connected AND no AP clients
                     if (WLED_CONNECTED) {
-                        USER_PRINTLN(F("[BLE Test] WiFi connected, BLE stays off"));
+                        USER_PRINTLN(F("[Sol BLE] WiFi connected, BLE stays off"));
                         
                         // Initialize heavy services now that BLE is stopped and heap is freed
-                        USER_PRINTLN(F("[BLE Test] Initializing heavy services (UDP, E1.31, MQTT)..."));
+                        USER_PRINTLN(F("[Sol BLE] Initializing heavy services (UDP, E1.31, MQTT)..."));
                         if (udpPort > 0 && udpPort != ntpLocalPort) {
                             udpConnected = notifierUdp.begin(udpPort);
                             if (udpConnected && udpRgbPort != udpPort)
@@ -391,14 +375,14 @@ public:
                         #ifndef WLED_DISABLE_MQTT
                         initMqtt();
                         #endif
-                        USER_PRINTF("[BLE Test] Heavy services started. Heap: %d bytes\n", ESP.getFreeHeap());
+                        USER_PRINTF("[Sol BLE] Heavy services started. Heap: %d bytes\n", ESP.getFreeHeap());
                         
                         _state = STATE_IDLE;
                     } else if (WiFi.softAPgetStationNum() == 0) {
-                        USER_PRINTLN(F("[BLE Test] WiFi not connected, restarting BLE..."));
+                        USER_PRINTLN(F("[Sol BLE] WiFi not connected, restarting BLE..."));
                         _state = STATE_BLE_STARTING;
                     } else {
-                        USER_PRINTLN(F("[BLE Test] AP client still connected, BLE stays off"));
+                        USER_PRINTLN(F("[Sol BLE] AP client still connected, BLE stays off"));
                         _state = STATE_IDLE;
                     }
                     break;
@@ -407,7 +391,7 @@ public:
                     // Non-blocking provisioning entry coordinated by events
                     switch (_provisioningPhase) {
                         case 0: // Initial - trigger disconnect
-                            USER_PRINTLN(F("[BLE Test] Phase 0: Disconnecting WiFi..."));
+                            USER_PRINTLN(F("[Sol BLE] Phase 0: Disconnecting WiFi..."));
                             _wifiStopped = false;
                             WiFi.disconnect(true);
                             _provisioningPhase = 1;
@@ -416,13 +400,13 @@ public:
                             
                         case 1: // Waiting for STA_STOP event
                             if (_wifiStopped) {
-                                USER_PRINTLN(F("[BLE Test] Phase 1: STA_STOP received, changing to AP_STA mode..."));
+                                USER_PRINTLN(F("[Sol BLE] Phase 1: STA_STOP received, changing to AP_STA mode..."));
                                 _wifiStopped = true; // Keep true to detect START
                                 WiFi.mode(WIFI_AP_STA);
                                 _provisioningPhase = 2;
                                 _provisioningPhaseStart = millis();
                             } else if (millis() - _provisioningPhaseStart > 5000) {
-                                USER_PRINTLN(F("[BLE Test] Phase 1: Timeout waiting for STA_STOP, proceeding anyway"));
+                                USER_PRINTLN(F("[Sol BLE] Phase 1: Timeout waiting for STA_STOP, proceeding anyway"));
                                 WiFi.mode(WIFI_AP_STA);
                                 _provisioningPhase = 2;
                                 _provisioningPhaseStart = millis();
@@ -431,22 +415,22 @@ public:
                             
                         case 2: // Waiting for STA_START event
                             if (!_wifiStopped) {
-                                USER_PRINTLN(F("[BLE Test] Phase 2: STA_START received, WiFi ready for scan"));
+                                USER_PRINTLN(F("[Sol BLE] Phase 2: STA_START received, WiFi ready for scan"));
                                 _provisioningPhase = 3;
                             } else if (millis() - _provisioningPhaseStart > 3000) {
-                                USER_PRINTLN(F("[BLE Test] Phase 2: Timeout waiting for STA_START, proceeding anyway"));
+                                USER_PRINTLN(F("[Sol BLE] Phase 2: Timeout waiting for STA_START, proceeding anyway"));
                                 _provisioningPhase = 3;
                             }
                             break;
                             
                         case 3: // Ready - perform scan and start services
-                            USER_PRINTLN(F("[BLE Test] Phase 3: Starting provisioning services..."));
+                            USER_PRINTLN(F("[Sol BLE] Phase 3: Starting provisioning services..."));
                             
                             // Perform WiFi scan
                             performWifiScan(true);
                             
                             // Start AP
-                            USER_PRINTLN(F("[BLE Test] Starting AP..."));
+                            USER_PRINTLN(F("[Sol BLE] Starting AP..."));
                             WiFi.softAPConfig(IPAddress(4, 3, 2, 1), IPAddress(4, 3, 2, 1), IPAddress(255, 255, 255, 0));
                             WiFi.softAP(apSSID, apPass, apChannel, apHide);
                             
@@ -457,13 +441,13 @@ public:
                                 apActive = true;
                             }
                             
-                            USER_PRINTF("[BLE Test] AP started. Heap: %d bytes\n", ESP.getFreeHeap());
+                            USER_PRINTF("[Sol BLE] AP started. Heap: %d bytes\n", ESP.getFreeHeap());
                             
                             // Start BLE for provisioning
                             _provisioningStarted = true;
                             _enterProvisioningMode = false;
                             _state = STATE_BLE_STARTING;
-                            USER_PRINTLN(F("[BLE Test] Provisioning mode ready, starting BLE..."));
+                            USER_PRINTLN(F("[Sol BLE] Provisioning mode ready, starting BLE..."));
                             break;
                     }
                     break;
@@ -476,14 +460,14 @@ public:
                         
                         if (!wifiConfigured) {
                             // No WiFi configured - start provisioning immediately
-                            USER_PRINTLN(F("[BLE Test] No WiFi configured - starting provisioning"));
+                            USER_PRINTLN(F("[Sol BLE] No WiFi configured - starting provisioning"));
                             
                             // Perform WiFi scan (function prints its own message)
                             performWifiScan(true);
-                            USER_PRINTF("[BLE Test] Scan complete, cached %d bytes\n", _scanResults.length());
+                            USER_PRINTF("[Sol BLE] Scan complete, cached %d bytes\n", _scanResults.length());
                             
                             // Start AP
-                            USER_PRINTLN(F("[BLE Test] Starting AP..."));
+                            USER_PRINTLN(F("[Sol BLE] Starting AP..."));
                             WiFi.softAPConfig(IPAddress(4, 3, 2, 1), IPAddress(4, 3, 2, 1), IPAddress(255, 255, 255, 0));
                             WiFi.softAP(apSSID, apPass, apChannel, apHide);
                             
@@ -494,11 +478,11 @@ public:
                                 apActive = true;
                             }
                             
-                            USER_PRINTF("[BLE Test] AP started. Heap: %d bytes\n", ESP.getFreeHeap());
+                            USER_PRINTF("[Sol BLE] AP started. Heap: %d bytes\n", ESP.getFreeHeap());
                             
                             _provisioningStarted = true;
                             _state = STATE_BLE_STARTING;
-                            USER_PRINTLN(F("[BLE Test] Entering AP+BLE provisioning mode"));
+                            USER_PRINTLN(F("[Sol BLE] Entering AP+BLE provisioning mode"));
                         }
                         // If WiFi is configured, connected() callback will set _provisioningStarted
                     }
@@ -512,14 +496,14 @@ public:
         if (_pendingRename) {
             _pendingRename = false;
             serializeConfig();
-            USER_PRINTF("[BLE] Device rename saved: %s\n", serverDescription);
+            USER_PRINTF("[Sol BLE] Device rename saved: %s\n", serverDescription);
         }
 
         // ---- WiFi switch state machine (LAN reprovision test flow) ----
         if (_wifiSwitchPending && !_wifiSwitchInProgress && millis() >= _wifiSwitchStartAt) {
             _wifiSwitchPending = false;
             _wifiSwitchInProgress = true;
-            gl_ble_wifiSwitchInProgress = true;
+            sol_ble_wifiSwitchInProgress = true;
             _wifiSwitchPhase = WIFI_SWITCH_WAIT_NEW;
             _wifiSwitchPhaseStart = millis();
             _wifiSwitchNewConnectOk = false;
@@ -577,7 +561,7 @@ public:
                         USER_PRINTF("[WiFi Switch] Old network restored: %s\n", _wifiSwitchOldSSID);
                         USER_PRINTF("[WiFi Switch] Old network mDNS: %s.local\n", cmDNS);
                         _wifiSwitchInProgress = false;
-                        gl_ble_wifiSwitchInProgress = false;
+                        sol_ble_wifiSwitchInProgress = false;
                         _wifiSwitchPhase = WIFI_SWITCH_IDLE;
                     } else {
                         USER_PRINTF("[WiFi Switch] Waiting old SSID '%s', currently '%s'\n", _wifiSwitchOldSSID, activeSsid.c_str());
@@ -586,7 +570,7 @@ public:
                     setWifiSwitchStatus("old_reconnect_failed", "Could not reconnect old network.", "old_reconnect_failed");
                     USER_PRINTLN(F("[WiFi Switch] Failed to reconnect old network"));
                     _wifiSwitchInProgress = false;
-                    gl_ble_wifiSwitchInProgress = false;
+                    sol_ble_wifiSwitchInProgress = false;
                     _wifiSwitchPhase = WIFI_SWITCH_IDLE;
                 }
             }
@@ -617,11 +601,11 @@ public:
 
     void connected() override {
         // Called when WiFi successfully connects (boot or runtime)
-        USER_PRINTF("[BLE Test] connected() callback - WiFi connected to: %s\n", clientSSID);
+        USER_PRINTF("[Sol BLE] connected() callback - WiFi connected to: %s\n", clientSSID);
         _provisioningStarted = true; // Mark that WiFi is working, don't start provisioning
         _bootConnection = false;
         _connectionAttempts = 0;
-        gl_ble_wifiAuthFailure = false; // Clear global flag on successful connection
+        sol_ble_wifiAuthFailure = false; // Clear global flag on successful connection
 
         // Register /gl/rename endpoint once — lightweight device rename for post-provisioning.
         // Bypasses WLED's large JSON machinery; safe to call when heap is fragmented.
@@ -651,7 +635,7 @@ public:
                         return;
                     }
                     strlcpy(serverDescription, name, 33);
-                    USER_PRINTF("[BLE] Device renamed to: %s (save deferred)\n", serverDescription);
+                    USER_PRINTF("[Sol BLE] Device renamed to: %s (save deferred)\n", serverDescription);
                     _pendingRename = true;
 
                     // Notify app over WS so Settings can show success confirmation.
@@ -934,7 +918,7 @@ private:
 
     void performFactoryReset(const char* sourceMsg) {
         USER_PRINTLN(sourceMsg);
-        USER_PRINTLN(F("[BLE Test] Clearing WiFi credentials and resetting device name..."));
+        USER_PRINTLN(F("[Sol BLE] Clearing WiFi credentials and resetting device name..."));
 
         // Match existing button-reset behavior exactly
         strcpy(clientSSID, "Your_Network");
@@ -948,7 +932,7 @@ private:
         WiFi.disconnect(true, true);
 
         delay(500);
-        USER_PRINTLN(F("[BLE Test] Rebooting..."));
+        USER_PRINTLN(F("[Sol BLE] Rebooting..."));
         ESP.restart();
     }
 
@@ -957,28 +941,28 @@ private:
     void handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
         switch (event) {
             case SYSTEM_EVENT_STA_START:
-                USER_PRINTLN(F("[BLE Test] WiFi event: STA_START"));
+                USER_PRINTLN(F("[Sol BLE] WiFi event: STA_START"));
                 _wifiStopped = false;
                 break;
                 
             case SYSTEM_EVENT_STA_STOP:
-                USER_PRINTLN(F("[BLE Test] WiFi event: STA_STOP"));
+                USER_PRINTLN(F("[Sol BLE] WiFi event: STA_STOP"));
                 _wifiStopped = true;
                 break;
                 
             case SYSTEM_EVENT_STA_CONNECTED:
-                USER_PRINTF("[BLE Test] WiFi event: STA_CONNECTED to SSID: %s\n", WiFi.SSID().c_str());
+                USER_PRINTF("[Sol BLE] WiFi event: STA_CONNECTED to SSID: %s\n", WiFi.SSID().c_str());
                 _connectionAttempts = 0; // Reset attempt counter on successful connect
                 // Wait for IP assignment before declaring success
                 break;
                 
             case SYSTEM_EVENT_STA_GOT_IP:
-                USER_PRINTLN(F("[BLE Test] WiFi event: GOT_IP - Connection successful!"));
-                USER_PRINTF("[BLE Test] IP address: %s\n", WiFi.localIP().toString().c_str());
-                USER_PRINTF("[BLE Test] mDNS: %s.local\n", cmDNS);
+                USER_PRINTLN(F("[Sol BLE] WiFi event: GOT_IP - Connection successful!"));
+                USER_PRINTF("[Sol BLE] IP address: %s\n", WiFi.localIP().toString().c_str());
+                USER_PRINTF("[Sol BLE] mDNS: %s.local\n", cmDNS);
 
                 if (_wifiSwitchInProgress) {
-                    USER_PRINTLN(F("[BLE Test] WiFi switch in progress: skipping normal GOT_IP flow"));
+                    USER_PRINTLN(F("[Sol BLE] WiFi switch in progress: skipping normal GOT_IP flow"));
                     break;
                 }
                 
@@ -994,18 +978,18 @@ private:
                                       "\",\"mdns\":\"" + hostname + ".local\"}";
                     _echoChar->setValue((uint8_t*)response.c_str(), response.length());
                     _echoChar->notify();
-                    USER_PRINTLN(F("[BLE Test] ===== NOTIFICATION SENT TO APP ====="));
-                    USER_PRINTF("[BLE Test] %s\n", response.c_str());
-                    USER_PRINTLN(F("[BLE Test] ====================================="));
+                    USER_PRINTLN(F("[Sol BLE] ===== NOTIFICATION SENT TO APP ====="));
+                    USER_PRINTF("[Sol BLE] %s\n", response.c_str());
+                    USER_PRINTLN(F("[Sol BLE] ====================================="));
                 }
                 
                 // Stop BLE to free heap (BLE provisioning path)
                 if (_state == STATE_BLE_WAITING) {
-                    USER_PRINTLN(F("[BLE Test] Stopping BLE to free heap after successful connection"));
+                    USER_PRINTLN(F("[Sol BLE] Stopping BLE to free heap after successful connection"));
                     _state = STATE_BLE_STOPPING;
                 } else if (_state != STATE_BLE_STOPPING) {
                     // Normal boot path: BLE was never started, start heavy services now
-                    USER_PRINTLN(F("[BLE Test] Normal boot WiFi connect - starting heavy services"));
+                    USER_PRINTLN(F("[Sol BLE] Normal boot WiFi connect - starting heavy services"));
                     if (udpPort > 0 && udpPort != ntpLocalPort) {
                         udpConnected = notifierUdp.begin(udpPort);
                         if (udpConnected && udpRgbPort != udpPort)
@@ -1021,7 +1005,7 @@ private:
                     #ifndef WLED_DISABLE_MQTT
                     initMqtt();
                     #endif
-                    USER_PRINTF("[BLE Test] Heavy services started. Heap: %d bytes\n", ESP.getFreeHeap());
+                    USER_PRINTF("[Sol BLE] Heavy services started. Heap: %d bytes\n", ESP.getFreeHeap());
                 }
                 break;
                 
@@ -1029,16 +1013,16 @@ private:
                 wifi_err_reason_t reason = (wifi_err_reason_t)info.disconnected.reason;
 
                 if (_wifiSwitchInProgress) {
-                    USER_PRINTF("[BLE Test] WiFi switch in progress: ignoring disconnect reason %d\n", reason);
+                    USER_PRINTF("[Sol BLE] WiFi switch in progress: ignoring disconnect reason %d\n", reason);
                     break;
                 }
                 
-                USER_PRINTLN(F("[BLE Test] ========================================"));
-                USER_PRINTF("[BLE Test] WiFi DISCONNECTED event (reason code: %d)\n", reason);
+                USER_PRINTLN(F("[Sol BLE] ========================================"));
+                USER_PRINTF("[Sol BLE] WiFi DISCONNECTED event (reason code: %d)\n", reason);
                 
                 // Increment attempt counter
                 _connectionAttempts++;
-                USER_PRINTF("[BLE Test] Connection attempt #%d\n", _connectionAttempts);
+                USER_PRINTF("[Sol BLE] Connection attempt #%d\n", _connectionAttempts);
                 
                 // Determine failure type and reason string
                 bool isPermanentFailure = false;
@@ -1079,34 +1063,34 @@ private:
                     case WIFI_REASON_ASSOC_LEAVE:
                         // ASSOC_LEAVE during connection is just WiFi.begin() cleanup, not an error
                         if (_wifiConnecting && (millis() - _wifiConnectStart < 3000)) {
-                            USER_PRINTLN(F("[BLE Test] Ignoring ASSOC_LEAVE during connection setup"));
-                            USER_PRINTLN(F("[BLE Test] ========================================"));
+                            USER_PRINTLN(F("[Sol BLE] Ignoring ASSOC_LEAVE during connection setup"));
+                            USER_PRINTLN(F("[Sol BLE] ========================================"));
                             return; // Ignore - wait for real connection result
                         }
                         // Otherwise treat as graceful disconnect
                         reasonDesc = "Graceful disconnect (user-initiated)";
-                        USER_PRINTF("[BLE Test] %s\n", reasonDesc);
-                        USER_PRINTLN(F("[BLE Test] ========================================"));
+                        USER_PRINTF("[Sol BLE] %s\n", reasonDesc);
+                        USER_PRINTLN(F("[Sol BLE] ========================================"));
                         return; // Don't treat as error
                     default:
                         reasonDesc = "Connection failed";
                         break;
                 }
                 
-                USER_PRINTF("[BLE Test] Failure reason: %s\n", reasonDesc);
+                USER_PRINTF("[Sol BLE] Failure reason: %s\n", reasonDesc);
                 
                 // STOP RECONNECTION ATTEMPTS IMMEDIATELY
-                USER_PRINTLN(F("[BLE Test] Calling WiFi.disconnect(true) to stop reconnection..."));
+                USER_PRINTLN(F("[Sol BLE] Calling WiFi.disconnect(true) to stop reconnection..."));
                 WiFi.disconnect(true);
                 
                 if (isPermanentFailure) {
-                    USER_PRINTLN(F("[BLE Test] PERMANENT FAILURE DETECTED - will not retry!"));
+                    USER_PRINTLN(F("[Sol BLE] PERMANENT FAILURE DETECTED - will not retry!"));
                     _authFailure = true;
                     _wifiConnecting = false;
                     
                     // Set global flag to block WLED's reconnection attempts
-                    gl_ble_wifiAuthFailure = true;
-                    USER_PRINTLN(F("[BLE Test] Set gl_ble_wifiAuthFailure=true to block WLED reconnection"));
+                    sol_ble_wifiAuthFailure = true;
+                    USER_PRINTLN(F("[Sol BLE] Set sol_ble_wifiAuthFailure=true to block WLED reconnection"));
                     
                     // Enter provisioning mode if:
                     // 1. Not in BLE provisioning state (must be boot/WLED retry)
@@ -1116,12 +1100,12 @@ private:
                     
                     if (isBootFailure || tooManyAttempts) {
                         if (isBootFailure) {
-                            USER_PRINTLN(F("[BLE Test] Boot connection failed - entering provisioning mode"));
+                            USER_PRINTLN(F("[Sol BLE] Boot connection failed - entering provisioning mode"));
                         } else {
-                            USER_PRINTF("[BLE Test] Too many attempts (%d) - entering provisioning mode\n", _connectionAttempts);
+                            USER_PRINTF("[Sol BLE] Too many attempts (%d) - entering provisioning mode\n", _connectionAttempts);
                         }
-                        USER_PRINTLN(F("[BLE Test] Could not connect to WiFi - entering provisioning mode"));
-                        USER_PRINTF("[BLE Test] Keeping credentials: SSID='%s' (user can retry via BLE)\n", clientSSID);
+                        USER_PRINTLN(F("[Sol BLE] Could not connect to WiFi - entering provisioning mode"));
+                        USER_PRINTF("[Sol BLE] Keeping credentials: SSID='%s' (user can retry via BLE)\n", clientSSID);
 
                         // Defer full provisioning transition to loop() state machine.
                         // Doing this inside event callback blocks WiFi event processing and
@@ -1134,15 +1118,15 @@ private:
                         String response = "{\"status\":\"error\",\"reason\":\"" + String(reasonStr) + "\"}";
                         _echoChar->setValue((uint8_t*)response.c_str(), response.length());
                         _echoChar->notify();
-                        USER_PRINTLN(F("[BLE Test] ===== NOTIFICATION SENT TO APP ====="));
-                        USER_PRINTF("[BLE Test] %s\n", response.c_str());
-                        USER_PRINTLN(F("[BLE Test] ====================================="));
+                        USER_PRINTLN(F("[Sol BLE] ===== NOTIFICATION SENT TO APP ====="));
+                        USER_PRINTF("[Sol BLE] %s\n", response.c_str());
+                        USER_PRINTLN(F("[Sol BLE] ====================================="));
                     }
                 } else {
-                    USER_PRINTLN(F("[BLE Test] Transient failure - will retry if configured"));
+                    USER_PRINTLN(F("[Sol BLE] Transient failure - will retry if configured"));
                 }
                 
-                USER_PRINTLN(F("[BLE Test] ========================================"));
+                USER_PRINTLN(F("[Sol BLE] ========================================"));
                 break;
             }
                 
@@ -1153,13 +1137,13 @@ private:
     
     // WiFi scan with filtering and caching
     void performWifiScan(bool cacheResults) {
-        USER_PRINTLN(F("[BLE Test] Scanning for networks..."));
-        USER_PRINTF("[BLE Test] Heap before scan: %d bytes\n", ESP.getFreeHeap());
+        USER_PRINTLN(F("[Sol BLE] Scanning for networks..."));
+        USER_PRINTF("[Sol BLE] Heap before scan: %d bytes\n", ESP.getFreeHeap());
 
         // Ensure STA is enabled for scanning. Some failure paths force AP-only mode.
         wifi_mode_t mode = WiFi.getMode();
         if (mode != WIFI_STA && mode != WIFI_AP_STA) {
-            USER_PRINTF("[BLE Test] WiFi mode %d not scan-capable, switching to AP_STA...\n", mode);
+            USER_PRINTF("[Sol BLE] WiFi mode %d not scan-capable, switching to AP_STA...\n", mode);
             WiFi.mode(WIFI_AP_STA);
             delay(150);
         }
@@ -1168,22 +1152,22 @@ private:
 
         // Recover from transient scan state errors (-1 running / -2 not triggered on some stacks).
         if (n < 0) {
-            USER_PRINTF("[BLE Test] Initial scan returned %d, retrying once...\n", n);
+            USER_PRINTF("[Sol BLE] Initial scan returned %d, retrying once...\n", n);
             WiFi.scanDelete();
             delay(120);
             n = WiFi.scanNetworks(false, true);
         }
         
-        USER_PRINTF("[BLE Test] Scan complete: %d networks (heap: %d bytes)\n", n, ESP.getFreeHeap());
+        USER_PRINTF("[Sol BLE] Scan complete: %d networks (heap: %d bytes)\n", n, ESP.getFreeHeap());
         
         // Build JSON results with RSSI filtering
         if (n == WIFI_SCAN_FAILED || n < 0) {
-            USER_PRINTF("[BLE Test] Scan FAILED: %d\n", n);
+            USER_PRINTF("[Sol BLE] Scan FAILED: %d\n", n);
             if (cacheResults) {
                 _scanResults = "{\"status\":\"error\",\"code\":" + String(n) + "}";
             }
         } else if (n == 0) {
-            USER_PRINTLN(F("[BLE Test] No networks found"));
+            USER_PRINTLN(F("[Sol BLE] No networks found"));
             if (cacheResults) {
                 _scanResults = "{\"status\":\"success\",\"networks\":[]}";
             }
@@ -1210,7 +1194,7 @@ private:
                 }
             }
             
-            USER_PRINTF("[BLE Test] Found %d strong networks (>%d dBm)\n", validCount, MIN_RSSI);
+            USER_PRINTF("[Sol BLE] Found %d strong networks (>%d dBm)\n", validCount, MIN_RSSI);
             
             if (cacheResults) {
                 const int MAX_BLE_SIZE = 240; // NimBLE notify limit is 253 bytes, leave margin
@@ -1226,7 +1210,7 @@ private:
                     
                     // Check if adding this entry would exceed limit
                     if (_scanResults.length() + entry.length() + 2 > MAX_BLE_SIZE) { // +2 for ]}
-                        USER_PRINTF("[BLE Test] Size limit reached at %d networks\n", finalCount);
+                        USER_PRINTF("[Sol BLE] Size limit reached at %d networks\n", finalCount);
                         break;
                     }
                     
@@ -1236,7 +1220,7 @@ private:
                 }
                 
                 _scanResults += "]}";
-                USER_PRINTF("[BLE Test] Results stored: %d networks, %d bytes\n", finalCount, _scanResults.length());
+                USER_PRINTF("[Sol BLE] Results stored: %d networks, %d bytes\n", finalCount, _scanResults.length());
             }
             
             WiFi.scanDelete();
@@ -1246,10 +1230,10 @@ private:
     // BLE Server callbacks
     class ServerCallbacks : public NimBLEServerCallbacks {
     public:
-        ServerCallbacks(GLBLETestUsermod* parent) : _parent(parent) {}
+        ServerCallbacks(SolBleUsermod* parent) : _parent(parent) {}
         
         void onConnect(NimBLEServer* server) override {
-            USER_PRINTLN(F("[BLE Test] Client connected!"));
+            USER_PRINTLN(F("[Sol BLE] Client connected!"));
             _parent->_bleConnected = true;
             _parent->_bleDisconnected = false;
             _parent->_bleConnectTime = millis();
@@ -1260,27 +1244,27 @@ private:
             
             // Check if we have scan results to send (reconnect after scan)
             if (_parent->_scanState == SCAN_RESULTS_READY && !_parent->_scanResults.isEmpty()) {
-                USER_PRINTLN(F("[BLE Test] Sending stored scan results..."));
+                USER_PRINTLN(F("[Sol BLE] Sending stored scan results..."));
                 _parent->_echoChar->setValue((uint8_t*)_parent->_scanResults.c_str(), _parent->_scanResults.length());
                 
                 // Reset state but keep cached results (allow re-read, user can re-scan for fresh)
                 _parent->_scanState = SCAN_IDLE;
                 
-                USER_PRINTLN(F("[BLE Test] Scan results sent, ready for next command"));
+                USER_PRINTLN(F("[Sol BLE] Scan results sent, ready for next command"));
             } else if (!_parent->_scanResults.isEmpty()) {
                 // Have cached results - will send on subscription
-                USER_PRINTLN(F("[BLE Test] Cached scan results available, waiting for subscription..."));
+                USER_PRINTLN(F("[Sol BLE] Cached scan results available, waiting for subscription..."));
             } else {
                 // Normal connection - send ready message
                 String readyJson = "{\"status\":\"ready\",\"heap\":" + String(ESP.getFreeHeap()) + "}";
                 _parent->_echoChar->setValue((uint8_t*)readyJson.c_str(), readyJson.length());
                 
-                USER_PRINTLN(F("[BLE Test] Ready for commands"));
+                USER_PRINTLN(F("[Sol BLE] Ready for commands"));
             }
             
             // Stop AP (mutual exclusion)
             if (WiFi.softAPgetStationNum() == 0) {
-                USER_PRINTLN(F("[BLE Test] Stopping AP (BLE client active)"));
+                USER_PRINTLN(F("[Sol BLE] Stopping AP (BLE client active)"));
                 WiFi.softAPdisconnect(true);
                 ::dnsServer.stop();
                 apActive = false;
@@ -1288,14 +1272,14 @@ private:
         }
         
         void onDisconnect(NimBLEServer* server) override {
-            USER_PRINTLN(F("[BLE Test] Client disconnected!"));
+            USER_PRINTLN(F("[Sol BLE] Client disconnected!"));
             _parent->_bleConnected = false;
             _parent->_bleDisconnected = true;
             _parent->_connHandle = BLE_HS_CONN_HANDLE_NONE;
             
             // Resume AP if WiFi not connected (mutual exclusion)
             if (!WLED_CONNECTED) {
-                USER_PRINTLN(F("[BLE Test] Resuming AP (BLE client gone, WiFi not connected)"));
+                USER_PRINTLN(F("[Sol BLE] Resuming AP (BLE client gone, WiFi not connected)"));
                 WiFi.softAPConfig(IPAddress(4, 3, 2, 1), IPAddress(4, 3, 2, 1), IPAddress(255, 255, 255, 0));
                 WiFi.softAP(apSSID, apPass, apChannel, apHide);
                 
@@ -1308,36 +1292,36 @@ private:
         }
         
     private:
-        GLBLETestUsermod* _parent;
+        SolBleUsermod* _parent;
     };
     
     // Characteristic callbacks
     class CharCallbacks : public NimBLECharacteristicCallbacks {
     public:
-        CharCallbacks(GLBLETestUsermod* parent) : _parent(parent) {}
+        CharCallbacks(SolBleUsermod* parent) : _parent(parent) {}
         
         void onWrite(NimBLECharacteristic* pCharacteristic) override {
             std::string value = pCharacteristic->getValue();
             String cmd = String(value.c_str());
             cmd.trim();
             
-            USER_PRINTF("[BLE Test] Received: '%s'\n", cmd.c_str());
+            USER_PRINTF("[Sol BLE] Received: '%s'\n", cmd.c_str());
             
             if (cmd.equalsIgnoreCase("scan")) {
-                USER_PRINTLN(F("[BLE Test] Scan command received"));
+                USER_PRINTLN(F("[Sol BLE] Scan command received"));
                 // Send scanning response
                 String scanJson = "{\"status\":\"scanning\"}";
                 pCharacteristic->setValue((uint8_t*)scanJson.c_str(), scanJson.length());
                 pCharacteristic->notify();
-                USER_PRINTLN(F("[BLE Test] ===== NOTIFICATION SENT TO APP ====="));
-                USER_PRINTF("[BLE Test] %s\n", scanJson.c_str());
-                USER_PRINTLN(F("[BLE Test] ====================================="));
+                USER_PRINTLN(F("[Sol BLE] ===== NOTIFICATION SENT TO APP ====="));
+                USER_PRINTF("[Sol BLE] %s\n", scanJson.c_str());
+                USER_PRINTLN(F("[Sol BLE] ====================================="));
                 
                 // Mark for disconnect and scan
                 _parent->_scanRequested = true;
             } else if (cmd.startsWith("{")) {
                 // Parse JSON for WiFi credentials
-                USER_PRINTF("[BLE Test] Parsing JSON: %s\n", cmd.c_str());
+                USER_PRINTF("[Sol BLE] Parsing JSON: %s\n", cmd.c_str());
                 
                 // Simple JSON parsing for {"ssid":"...","psk":"..."}
                 int ssidStart = cmd.indexOf("\"ssid\":\"");
@@ -1354,7 +1338,7 @@ private:
                         String ssid = cmd.substring(ssidStart, ssidEnd);
                         String psk = cmd.substring(pskStart, pskEnd);
                         
-                        USER_PRINTF("[BLE Test] WiFi Credentials - SSID: %s, PSK: %s\n", ssid.c_str(), psk.c_str());
+                        USER_PRINTF("[Sol BLE] WiFi Credentials - SSID: %s, PSK: %s\n", ssid.c_str(), psk.c_str());
                         
                         // Save credentials exactly like WLED does
                         memset(clientSSID, 0, 33);
@@ -1364,7 +1348,7 @@ private:
                         
                         // Trigger config save and reconnect (WLED uses these flags)
                         doSerializeConfig = true;                        
-                        USER_PRINTLN(F("[BLE Test] Credentials saved, reconnect scheduled"));
+                        USER_PRINTLN(F("[Sol BLE] Credentials saved, reconnect scheduled"));
                         
                         // Don't send connecting status - let WiFi events notify success/failure
                         // String response = "{\"status\":\"connecting\"}";
@@ -1374,59 +1358,59 @@ private:
                         // Set flag for main loop to handle (DON'T do blocking WiFi ops in callback!)
                         _parent->_connectRequested = true;
                     } else {
-                        USER_PRINTLN(F("[BLE Test] Failed to parse credentials"));
+                        USER_PRINTLN(F("[Sol BLE] Failed to parse credentials"));
                         String response = "{\"status\":\"error\",\"message\":\"Invalid format\"}";
                         pCharacteristic->setValue((uint8_t*)response.c_str(), response.length());
                         pCharacteristic->notify();
-                        USER_PRINTLN(F("[BLE Test] ===== NOTIFICATION SENT TO APP ====="));
-                        USER_PRINTF("[BLE Test] %s\n", response.c_str());
-                        USER_PRINTLN(F("[BLE Test] ====================================="));
+                        USER_PRINTLN(F("[Sol BLE] ===== NOTIFICATION SENT TO APP ====="));
+                        USER_PRINTF("[Sol BLE] %s\n", response.c_str());
+                        USER_PRINTLN(F("[Sol BLE] ====================================="));
                     }
                 } else {
                     // Echo response - notify
-                    USER_PRINTF("[BLE Test] Echo: %s\n", cmd.c_str());
+                    USER_PRINTF("[Sol BLE] Echo: %s\n", cmd.c_str());
                     String response = "{\"echo\":\"" + cmd + "\"}";
                     pCharacteristic->setValue((uint8_t*)response.c_str(), response.length());
                     pCharacteristic->notify();
-                    USER_PRINTLN(F("[BLE Test] ===== NOTIFICATION SENT TO APP ====="));
-                    USER_PRINTF("[BLE Test] %s\n", response.c_str());
-                    USER_PRINTLN(F("[BLE Test] ====================================="));
+                    USER_PRINTLN(F("[Sol BLE] ===== NOTIFICATION SENT TO APP ====="));
+                    USER_PRINTF("[Sol BLE] %s\n", response.c_str());
+                    USER_PRINTLN(F("[Sol BLE] ====================================="));
                 }
             } else {
                 // Echo response - notify
-                USER_PRINTF("[BLE Test] Echo: %s\n", cmd.c_str());
+                USER_PRINTF("[Sol BLE] Echo: %s\n", cmd.c_str());
                 String response = "{\"echo\":\"" + cmd + "\"}";
                 pCharacteristic->setValue((uint8_t*)response.c_str(), response.length());
                 pCharacteristic->notify();
-                USER_PRINTLN(F("[BLE Test] ===== NOTIFICATION SENT TO APP ====="));
-                USER_PRINTF("[BLE Test] %s\n", response.c_str());
-                USER_PRINTLN(F("[BLE Test] ====================================="));
+                USER_PRINTLN(F("[Sol BLE] ===== NOTIFICATION SENT TO APP ====="));
+                USER_PRINTF("[Sol BLE] %s\n", response.c_str());
+                USER_PRINTLN(F("[Sol BLE] ====================================="));
             }
         }
         
         void onRead(NimBLECharacteristic* pCharacteristic) override {
-            USER_PRINTF("[BLE Test] Client read: '%s'\n", pCharacteristic->getValue().c_str());
+            USER_PRINTF("[Sol BLE] Client read: '%s'\n", pCharacteristic->getValue().c_str());
         }
         
         void onSubscribe(NimBLECharacteristic* pCharacteristic, ble_gap_conn_desc* desc, uint16_t subValue) override {
-            USER_PRINTF("[BLE Test] Client subscribed (value: %d)\n", subValue);
+            USER_PRINTF("[Sol BLE] Client subscribed (value: %d)\n", subValue);
             
             // If subscribed and we have cached results, send them immediately
             if (subValue > 0 && !_parent->_scanResults.isEmpty() && _parent->_scanState == SCAN_IDLE) {
-                USER_PRINTLN(F("[BLE Test] Sending cached scan results on subscription..."));
+                USER_PRINTLN(F("[Sol BLE] Sending cached scan results on subscription..."));
                 pCharacteristic->setValue((uint8_t*)_parent->_scanResults.c_str(), _parent->_scanResults.length());
                 pCharacteristic->notify();
-                USER_PRINTLN(F("[BLE Test] ===== NOTIFICATION SENT TO APP ====="));
-                USER_PRINTF("[BLE Test] %s\n", _parent->_scanResults.c_str());
-                USER_PRINTLN(F("[BLE Test] ====================================="));
+                USER_PRINTLN(F("[Sol BLE] ===== NOTIFICATION SENT TO APP ====="));
+                USER_PRINTF("[Sol BLE] %s\n", _parent->_scanResults.c_str());
+                USER_PRINTLN(F("[Sol BLE] ====================================="));
             }
         }
         
     private:
-        GLBLETestUsermod* _parent;
+        SolBleUsermod* _parent;
     };
 };
 
-const char GLBLETestUsermod::_name[] PROGMEM = "BLE_Test";
+const char SolBleUsermod::_name[] PROGMEM = "Sol_BLE";
 
-#endif // USERMOD_GL_BLE_TEST
+#endif // USERMOD_SOL_BLE

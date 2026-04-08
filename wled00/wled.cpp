@@ -682,6 +682,10 @@ void WLED::initConnection()
   ws.onEvent(wsEvent);
   #endif
 
+<<<<<<< HEAD
+=======
+#ifndef USERMOD_SOL_BLE
+>>>>>>> 32823930 (Cleanup, renaming and getting platformio_override ready for sol board)
   WiFi.disconnect(true);        // close old connections
 #ifdef ESP8266
   WiFi.setPhyMode(force802_3g ? WIFI_PHY_MODE_11G : WIFI_PHY_MODE_11N);
@@ -728,7 +732,13 @@ void WLED::initConnection()
   #if defined(LOLIN_WIFI_FIX) && (defined(ARDUINO_ARCH_ESP32C3) || defined(ARDUINO_ARCH_ESP32S2) || defined(ARDUINO_ARCH_ESP32S3))
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
   #endif
+<<<<<<< HEAD
   WiFi.setSleep(!noWifiSleep);
+=======
+  #ifndef USERMOD_SOL_BLE
+  WiFi.setSleep(!noWifiSleep);  // Skip when BLE active - pm_set_sleep_type crashes regardless of CONFIG_PM_ENABLE=0
+  #endif
+>>>>>>> 32823930 (Cleanup, renaming and getting platformio_override ready for sol board)
   WiFi.setHostname(hostname);
 #else
   wifi_set_sleep_type((noWifiSleep) ? NONE_SLEEP_T : MODEM_SLEEP_T);
@@ -773,6 +783,13 @@ void WLED::initInterfaces()
   }
   server.begin();
 
+<<<<<<< HEAD
+=======
+  #ifndef USERMOD_SOL_BLE
+  // When BLE usermod is active, heavy services are started by the usermod itself
+  // after BLE stops (sol_ble.h STATE_BLE_STOPPING). Starting them here too
+  // causes double-init which crashes E1.31/DDP and fragments heap.
+>>>>>>> 32823930 (Cleanup, renaming and getting platformio_override ready for sol board)
   if (udpPort > 0 && udpPort != ntpLocalPort) {
     udpConnected = notifierUdp.begin(udpPort);
     if (udpConnected && udpRgbPort != udpPort)
@@ -789,6 +806,10 @@ void WLED::initInterfaces()
 #ifndef WLED_DISABLE_MQTT
   initMqtt();
 #endif
+<<<<<<< HEAD
+=======
+  #endif  // USERMOD_SOL_BLE
+>>>>>>> 32823930 (Cleanup, renaming and getting platformio_override ready for sol board)
   interfacesInited = true;
   wasConnected = true;
 }
@@ -800,9 +821,9 @@ void WLED::handleConnection()
   static unsigned long heapTime = 0;
   unsigned long now = millis();
 
-#ifdef USERMOD_GL_BLE_TEST
-  extern bool gl_ble_wifiSwitchInProgress;
-  if (gl_ble_wifiSwitchInProgress) {
+#ifdef USERMOD_SOL_BLE
+  extern bool sol_ble_wifiSwitchInProgress;
+  if (sol_ble_wifiSwitchInProgress) {
     lastReconnectAttempt = now;
     return;
   }
@@ -817,6 +838,11 @@ void WLED::handleConnection()
     return;
   }
 
+<<<<<<< HEAD
+=======
+#ifndef USERMOD_SOL_BLE
+  // Skip heap reconnect logic when BLE usermod active - it manages connection lifecycle
+>>>>>>> 32823930 (Cleanup, renaming and getting platformio_override ready for sol board)
   // reconnect WiFi to clear stale allocations if heap gets too low
   if (now - heapTime > 5000) {
     uint32_t heap = ESP.getFreeHeap();
@@ -831,6 +857,10 @@ void WLED::handleConnection()
     lastHeap = heap;
     heapTime = now;
   }
+<<<<<<< HEAD
+=======
+  #endif  // USERMOD_SOL_BLE
+>>>>>>> 32823930 (Cleanup, renaming and getting platformio_override ready for sol board)
 
   byte stac = 0;
   if (apActive) {
@@ -873,6 +903,18 @@ void WLED::handleConnection()
       improvActive = 2;
     }
     if (now - lastReconnectAttempt > ((stac) ? 300000 : 18000) && WLED_WIFI_CONFIGURED) {
+<<<<<<< HEAD
+=======
+      #ifdef USERMOD_SOL_BLE
+      // Check if BLE usermod has detected auth failure - don't retry if so
+      extern bool sol_ble_wifiAuthFailure;
+      if (sol_ble_wifiAuthFailure) {
+        DEBUG_PRINTLN(F("BLE usermod auth failure - skipping reconnection attempt"));
+        lastReconnectAttempt = now; // Reset timer to prevent spam
+        return;
+      }
+      #endif
+>>>>>>> 32823930 (Cleanup, renaming and getting platformio_override ready for sol board)
       if (improvActive == 2) improvActive = 3;
       DEBUG_PRINTLN(F("Last reconnect too old."));
       initConnection();
