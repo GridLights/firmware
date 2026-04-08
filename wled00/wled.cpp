@@ -95,8 +95,7 @@ void WLED::loop()
   #endif
   if (!realtimeMode || realtimeOverride || (realtimeMode && useMainSegmentOnly))  // block stuff if WARLS/Adalight is enabled
   {
-    // Captive portal disabled
-    // if (apActive) dnsServer.processNextRequest();
+    if (apActive) dnsServer.processNextRequest();
     #ifndef WLED_DISABLE_OTA
     if (WLED_CONNECTED && aOtaEnabled && !otaLock && correctPIN) ArduinoOTA.handle();
     #endif
@@ -800,6 +799,14 @@ void WLED::handleConnection()
   static uint32_t lastHeap = UINT32_MAX;
   static unsigned long heapTime = 0;
   unsigned long now = millis();
+
+#ifdef USERMOD_GL_BLE_TEST
+  extern bool gl_ble_wifiSwitchInProgress;
+  if (gl_ble_wifiSwitchInProgress) {
+    lastReconnectAttempt = now;
+    return;
+  }
+#endif
 
   if (now < 2000 && (!WLED_WIFI_CONFIGURED || apBehavior == AP_BEHAVIOR_ALWAYS))
     return;
