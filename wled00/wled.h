@@ -6,8 +6,8 @@
    @author Christian Schwinne
  */
 
-// version code in format yymmddb (b = daily build)
-#define VERSION 2602141
+// version code in format UUUUyymmdd (UUUU = upstream e.g. 1700 = 17.0.0, yymmdd = GridLights build date)
+#define VERSION 1700260411
 
 //uncomment this if you have a "my_config.h" file you'd like to use
 //#define WLED_USE_MY_CONFIG

@@ -4,7 +4,7 @@
 
 #ifndef WLED_VERSION
   #warning WLED_VERSION was not set - using default value of 'dev'
-  #define WLED_VERSION dev
+  #define WLED_VERSION 17.0.0dev-gl.260411
 #endif
 #ifndef WLED_RELEASE_NAME
   #warning WLED_RELEASE_NAME was not set - using default value of 'Custom'
