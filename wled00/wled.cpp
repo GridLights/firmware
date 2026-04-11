@@ -95,8 +95,12 @@ void WLED::loop()
   #endif
   if (!realtimeMode || realtimeOverride || (realtimeMode && useMainSegmentOnly))  // block stuff if WARLS/Adalight is enabled
   {
-    // Captive portal disabled
-    // if (apActive) dnsServer.processNextRequest();
+#ifdef USERMOD_SOL_BLE
+    extern bool sol_ble_dnsActive;
+    if (apActive && sol_ble_dnsActive) dnsServer.processNextRequest();
+#else
+    if (apActive) dnsServer.processNextRequest();
+#endif
     #ifndef WLED_DISABLE_OTA
     if (WLED_CONNECTED && aOtaEnabled && !otaLock && correctPIN) ArduinoOTA.handle();
     #endif
@@ -729,7 +733,9 @@ void WLED::initConnection()
   #if defined(LOLIN_WIFI_FIX) && (defined(ARDUINO_ARCH_ESP32C3) || defined(ARDUINO_ARCH_ESP32S2) || defined(ARDUINO_ARCH_ESP32S3))
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
   #endif
-  WiFi.setSleep(!noWifiSleep);
+  #ifndef USERMOD_SOL_BLE
+  WiFi.setSleep(!noWifiSleep);  // Skip when BLE active - pm_set_sleep_type crashes regardless of CONFIG_PM_ENABLE=0
+  #endif
   WiFi.setHostname(hostname);
 #else
   wifi_set_sleep_type((noWifiSleep) ? NONE_SLEEP_T : MODEM_SLEEP_T);
@@ -739,6 +745,12 @@ void WLED::initConnection()
 void WLED::initInterfaces()
 {
   DEBUG_PRINTLN(F("Init STA interfaces"));
+
+#ifdef WLED_ENABLE_WEBSOCKETS
+  // BLE-first provisioning path can connect WiFi without calling initConnection(),
+  // so ensure WS event callback is always bound here as well.
+  ws.onEvent(wsEvent);
+#endif
 
 #ifndef WLED_DISABLE_HUESYNC
   IPAddress ipAddress = Network.localIP();
@@ -774,6 +786,10 @@ void WLED::initInterfaces()
   }
   server.begin();
 
+  #ifndef USERMOD_SOL_BLE
+  // When BLE usermod is active, heavy services are started by the usermod itself
+  // after BLE stops (sol_ble.h STATE_BLE_STOPPING). Starting them here too
+  // causes double-init which crashes E1.31/DDP and fragments heap.
   if (udpPort > 0 && udpPort != ntpLocalPort) {
     udpConnected = notifierUdp.begin(udpPort);
     if (udpConnected && udpRgbPort != udpPort)
@@ -790,6 +806,7 @@ void WLED::initInterfaces()
 #ifndef WLED_DISABLE_MQTT
   initMqtt();
 #endif
+  #endif  // USERMOD_SOL_BLE
   interfacesInited = true;
   wasConnected = true;
 }
@@ -801,6 +818,14 @@ void WLED::handleConnection()
   static unsigned long heapTime = 0;
   unsigned long now = millis();
 
+#ifdef USERMOD_SOL_BLE
+  extern bool sol_ble_wifiSwitchInProgress;
+  if (sol_ble_wifiSwitchInProgress) {
+    lastReconnectAttempt = now;
+    return;
+  }
+#endif
+
   if (now < 2000 && (!WLED_WIFI_CONFIGURED || apBehavior == AP_BEHAVIOR_ALWAYS))
     return;
 
@@ -810,6 +835,8 @@ void WLED::handleConnection()
     return;
   }
 
+#ifndef USERMOD_SOL_BLE
+  // Skip heap reconnect logic when BLE usermod active - it manages connection lifecycle
   // reconnect WiFi to clear stale allocations if heap gets too low
   if (now - heapTime > 5000) {
     uint32_t heap = ESP.getFreeHeap();
@@ -824,6 +851,7 @@ void WLED::handleConnection()
     lastHeap = heap;
     heapTime = now;
   }
+  #endif  // USERMOD_SOL_BLE
 
   byte stac = 0;
   if (apActive) {
@@ -866,6 +894,15 @@ void WLED::handleConnection()
       improvActive = 2;
     }
     if (now - lastReconnectAttempt > ((stac) ? 300000 : 18000) && WLED_WIFI_CONFIGURED) {
+      #ifdef USERMOD_SOL_BLE
+      // Check if BLE usermod has detected auth failure - don't retry if so
+      extern volatile bool sol_ble_wifiAuthFailure;
+      if (sol_ble_wifiAuthFailure) {
+        DEBUG_PRINTLN(F("BLE usermod auth failure - skipping reconnection attempt"));
+        lastReconnectAttempt = now; // Reset timer to prevent spam
+        return;
+      }
+      #endif
       if (improvActive == 2) improvActive = 3;
       DEBUG_PRINTLN(F("Last reconnect too old."));
       initConnection();
