@@ -746,6 +746,12 @@ void WLED::initInterfaces()
 {
   DEBUG_PRINTLN(F("Init STA interfaces"));
 
+#ifdef WLED_ENABLE_WEBSOCKETS
+  // BLE-first provisioning path can connect WiFi without calling initConnection(),
+  // so ensure WS event callback is always bound here as well.
+  ws.onEvent(wsEvent);
+#endif
+
 #ifndef WLED_DISABLE_HUESYNC
   IPAddress ipAddress = Network.localIP();
   if (hueIP[0] == 0) {

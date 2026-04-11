@@ -27,8 +27,9 @@
 #define BLE_WAIT_FOR_CONNECTION
 
 // NimBLE deinit mode:
-// true  = full heap release (reclaims ~40KB, slightly slower deinit)
-// false = stop BLE but keep allocations reserved (faster + safer against WDT)
+// true  = full heap release (reclaims ~40KB). Only used for the one-time
+//         shutdown after successful WiFi provisioning — never in a cycle.
+// false = keep C++ objects alive (not used; deinit cycles are avoided entirely)
 #define BLE_DEINIT_RELEASE_HEAP true
 
 // State machine tick interval in milliseconds
@@ -256,8 +257,9 @@ public:
                     USER_PRINTF("[Sol BLE] Heap before: %d bytes\n", ESP.getFreeHeap());
                     NimBLEDevice::init(serverDescription);  // uses WLED's stored name (default: 'Sol Spektrum - Unconfigured')
 
-                    // Create fresh server/service/characteristic on each BLE start.
-                    // This avoids stale GATT handles after scan-driven deinit/reinit cycles.
+                    // Create server/service/characteristic.
+                    // This only runs once per power-on: scan cycles no longer
+                    // deinit/reinit BLE, so we never re-enter this state.
                     _bleServer = NimBLEDevice::createServer();
                     if (!_serverCallbacks) _serverCallbacks = new ServerCallbacks(this);
                     _bleServer->setCallbacks(_serverCallbacks);
@@ -307,7 +309,7 @@ public:
                         // to prevent pm_set_sleep_type crash during BLE coexistence
                         WiFi.disconnect();
                         delay(100);
-                        WiFi.begin(clientSSID, clientPass);
+                        WiFi.begin(_pendingSSID, _pendingPass);
                     }
                     // Check for scan request
                     else if (_scanRequested && _bleConnected && !_bleDisconnected &&
@@ -325,51 +327,43 @@ public:
                     }
                     break;
                     
-                case STATE_BLE_STOPPING:
-                    USER_PRINTLN(F("[Sol BLE] Stopping BLE..."));
-                    USER_PRINTF("[Sol BLE] Heap before: %d bytes\n", ESP.getFreeHeap());
-                    // NimBLEDevice::deinit() blocks the CPU for hundreds of ms.
-                    // The TWDT monitors IDLE0 and IDLE1 by default — they can't run
-                    // while we're blocked, so their WDT window expires and the ISR fires
-                    // slightly AFTER deinit completes (timing artifact).
-                    // Remove all three affected handles before deinit, re-add after.
-                    esp_task_wdt_reset();
-                    esp_task_wdt_delete(NULL);                            // loop task (if subscribed)
-                    esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(0)); // IDLE core 0
-                    esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(1)); // IDLE core 1
-                    NimBLEDevice::deinit(BLE_DEINIT_RELEASE_HEAP);
-                    // Re-add IDLE tasks — they must be monitored during normal operation.
-                    // Do NOT re-add NULL (our task); the loop task isn't normally TWDT-subscribed
-                    // and re-adding it would require feeding from every loop() call.
-                    esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(0));
-                    esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(1));
-                    esp_task_wdt_reset();
-                    // Reset connection state and clear handles.
-                    // With BLE_DEINIT_RELEASE_HEAP=true we rebuild GATT on next start.
+                case STATE_BLE_STOPPING: {
+                    // Three flows arrive here:
+                    //   1. Scan requested  — do WiFi scan, restart advertising
+                    //   2. Normal disconnect (no scan, WiFi not connected) — restart advertising
+                    //   3. Final shutdown (WiFi connected) — full deinit, start heavy services
+                    //
+                    // NimBLE 1.4.x crashes on deinit/reinit cycles (stale GAP pointers),
+                    // so we ONLY deinit when BLE is done forever (WiFi connected).
+                    bool doScan = _scanRequested;
+                    _scanRequested = false;
+
+                    // Reset connection bookkeeping (common to all paths)
                     _bleConnected = false;
                     _bleDisconnected = false;
                     _connHandle = BLE_HS_CONN_HANDLE_NONE;
                     _bleConnectTime = 0;
-                    _bleServer = nullptr;
-                    _echoChar = nullptr;
-                    
-                    // Perform WiFi scan if requested
-                    if (_scanRequested) {
-                        _scanRequested = false;
-                        performWifiScan(true); // true = cache results
-                        _scanState = SCAN_RESULTS_READY;
-                    } else {
-                        _scanRequested = false;
-                        _connectRequested = false; // Clear if still set
-                    }
-                    
-                    USER_PRINTF("[Sol BLE] BLE stopped. Heap: %d bytes\n", ESP.getFreeHeap());
-                    
-                    // Only restart BLE if WiFi not connected AND no AP clients
-                    if (WLED_CONNECTED) {
-                        USER_PRINTLN(F("[Sol BLE] WiFi connected, BLE stays off"));
-                        
-                        // Initialize heavy services now that BLE is stopped and heap is freed
+
+                    if (WLED_CONNECTED && !doScan) {
+                        // --- FINAL SHUTDOWN: WiFi is up, BLE done forever ---
+                        USER_PRINTLN(F("[Sol BLE] Stopping BLE (final shutdown)..."));
+                        USER_PRINTF("[Sol BLE] Heap before: %d bytes\n", ESP.getFreeHeap());
+                        _connectRequested = false;
+
+                        esp_task_wdt_reset();
+                        esp_task_wdt_delete(NULL);
+                        esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(0));
+                        esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(1));
+                        NimBLEDevice::deinit(BLE_DEINIT_RELEASE_HEAP);
+                        esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(0));
+                        esp_task_wdt_add(xTaskGetIdleTaskHandleForCPU(1));
+                        esp_task_wdt_reset();
+
+                        _bleServer = nullptr;
+                        _echoChar = nullptr;
+
+                        USER_PRINTF("[Sol BLE] BLE stopped. Heap: %d bytes\n", ESP.getFreeHeap());
+
                         USER_PRINTLN(F("[Sol BLE] Initializing heavy services (UDP, E1.31, MQTT)..."));
                         if (udpPort > 0 && udpPort != ntpLocalPort) {
                             udpConnected = notifierUdp.begin(udpPort);
@@ -380,7 +374,7 @@ public:
                         }
                         if (ntpEnabled)
                             ntpConnected = ntpUdp.begin(ntpLocalPort);
-                        
+
                         e131.begin(e131Multicast, e131Port, e131Universe, E131_MAX_UNIVERSE_COUNT);
                         ddp.begin(false, DDP_DEFAULT_PORT);
                         reconnectHue();
@@ -388,24 +382,36 @@ public:
                         initMqtt();
                         #endif
                         USER_PRINTF("[Sol BLE] Heavy services started. Heap: %d bytes\n", ESP.getFreeHeap());
-                        
                         _state = STATE_IDLE;
-                    } else if (WiFi.softAPgetStationNum() == 0) {
-                        USER_PRINTLN(F("[Sol BLE] WiFi not connected, restarting BLE..."));
-                        _state = STATE_BLE_STARTING;
                     } else {
-                        USER_PRINTLN(F("[Sol BLE] AP client still connected, BLE stays off"));
-                        _state = STATE_IDLE;
+                        // --- BLE STAYS ALIVE: scan or normal re-advertise ---
+                        if (doScan) {
+                            USER_PRINTLN(F("[Sol BLE] WiFi scan (BLE stays alive)..."));
+                            performWifiScan(true);
+                            _scanState = SCAN_RESULTS_READY;
+                            USER_PRINTF("[Sol BLE] Scan done. Heap: %d bytes\n", ESP.getFreeHeap());
+                        } else {
+                            USER_PRINTLN(F("[Sol BLE] Client gone, restarting advertising..."));
+                        }
+
+                        NimBLEDevice::getAdvertising()->start();
+                        USER_PRINTLN(F("[Sol BLE] Advertising restarted, waiting for reconnect..."));
+                        _state = STATE_BLE_WAITING;
                     }
                     break;
+                }
                     
                 case STATE_ENTERING_PROVISIONING:
                     // Non-blocking provisioning entry coordinated by events
                     switch (_provisioningPhase) {
                         case 0: // Initial - trigger disconnect
                             USER_PRINTLN(F("[Sol BLE] Phase 0: Disconnecting WiFi..."));
-                            _wifiStopped = false;
-                            WiFi.disconnect(true);
+                            if (!_wifiStopped) {
+                                _wifiStopped = false;
+                                WiFi.disconnect(true);
+                            } else {
+                                USER_PRINTLN(F("[Sol BLE] Phase 0: STA already stopped, skipping disconnect"));
+                            }
                             _provisioningPhase = 1;
                             _provisioningPhaseStart = millis();
                             break;
@@ -615,11 +621,21 @@ public:
 
     void connected() override {
         // Called when WiFi successfully connects (boot or runtime)
-        USER_PRINTF("[Sol BLE] connected() callback - WiFi connected to: %s\n", clientSSID);
+        USER_PRINTF("[Sol BLE] connected() callback - WiFi connected to: %s\n", WiFi.SSID().c_str());
         _provisioningStarted = true; // Mark that WiFi is working, don't start provisioning
         _bootConnection = false;
         _connectionAttempts = 0;
         sol_ble_wifiAuthFailure = false; // Clear global flag on successful connection
+
+        // Persist BLE-provisioned credentials now that connection actually succeeded
+        if (_hasPendingCredentials) {
+            USER_PRINTF("[Sol BLE] Persisting verified credentials: SSID='%s'\n", _pendingSSID);
+            strlcpy(clientSSID, _pendingSSID, sizeof(clientSSID));
+            strlcpy(clientPass, _pendingPass, sizeof(clientPass));
+            memset(_pendingPass, 0, sizeof(_pendingPass)); // scrub password from temp
+            _hasPendingCredentials = false;
+            serializeConfig();
+        }
 
         // Register /gl/rename endpoint once — lightweight device rename for post-provisioning.
         // Bypasses WLED's large JSON machinery; safe to call when heap is fragmented.
@@ -821,19 +837,19 @@ private:
     NimBLECharacteristic* _echoChar = nullptr;
     ServerCallbacks* _serverCallbacks = nullptr;  // lazy-init, reused across BLE cycles to avoid heap leak
     CharCallbacks* _charCallbacks = nullptr;       // lazy-init, reused across BLE cycles to avoid heap leak
-    bool _bleConnected = false;
-    bool _bleDisconnected = false;
+    volatile bool _bleConnected = false;     // written from NimBLE host task
+    volatile bool _bleDisconnected = false;  // written from NimBLE host task
     uint32_t _bleConnectTime = 0;
     uint16_t _connHandle = BLE_HS_CONN_HANDLE_NONE;
-    bool _scanRequested = false;
-    bool _connectRequested = false;
+    volatile bool _scanRequested = false;    // written from NimBLE host task
+    volatile bool _connectRequested = false; // written from NimBLE host task
     bool _wifiConnecting = false;
     uint32_t _wifiConnectStart = 0;
     bool _authFailure = false;
     bool _bootConnection = false; // Track if this is boot-time connection vs BLE provisioning
     uint8_t _connectionAttempts = 0; // Count connection attempts to prevent infinite retries
-    bool _wifiStopped = false; // Track STA_STOP event for provisioning transition
-    bool _enterProvisioningMode = false; // Flag to enter provisioning (set by event handler)
+    volatile bool _wifiStopped = false;           // written from WiFi event task
+    volatile bool _enterProvisioningMode = false;  // written from WiFi event task
     uint32_t _provisioningPhaseStart = 0; // Timing for provisioning phases
     uint8_t _provisioningPhase = 0; // 0=initial, 1=waiting_for_stop, 2=waiting_for_start, 3=ready
     bool _buttonPressed = false;
@@ -860,6 +876,12 @@ private:
     bool _wifiScanRegistered = false;
     bool _wifiSwitchRegistered = false;
     volatile bool _pendingRename = false;
+
+    // Temporary credentials from BLE provisioning — only persisted to
+    // clientSSID/clientPass + serializeConfig() in connected() on success.
+    char _pendingSSID[33] = {0};
+    char _pendingPass[65] = {0};
+    bool _hasPendingCredentials = false;
 
     // WiFi switch over LAN (test new creds, then reconnect old network)
     bool _wifiSwitchPending = false;
@@ -1095,9 +1117,14 @@ private:
                 
                 USER_PRINTF("[Sol BLE] Failure reason: %s\n", reasonDesc);
                 
-                // STOP RECONNECTION ATTEMPTS IMMEDIATELY
-                USER_PRINTLN(F("[Sol BLE] Calling WiFi.disconnect(true) to stop reconnection..."));
-                WiFi.disconnect(true);
+                // Stop connection retries without forcing an immediate STA stop here.
+                // A hard disconnect(true) from inside disconnect-event handling can
+                // recurse into STA_STOP/STA_START churn. Provisioning transition will
+                // perform the hard stop in loop() state-machine when needed.
+                USER_PRINTLN(F("[Sol BLE] Calling WiFi.disconnect(false) to stop reconnection..."));
+                if (!_wifiStopped) {
+                    WiFi.disconnect(false);
+                }
                 
                 if (isPermanentFailure) {
                     USER_PRINTLN(F("[Sol BLE] PERMANENT FAILURE DETECTED - will not retry!"));
@@ -1121,7 +1148,11 @@ private:
                             USER_PRINTF("[Sol BLE] Too many attempts (%d) - entering provisioning mode\n", _connectionAttempts);
                         }
                         USER_PRINTLN(F("[Sol BLE] Could not connect to WiFi - entering provisioning mode"));
-                        USER_PRINTF("[Sol BLE] Keeping credentials: SSID='%s' (user can retry via BLE)\n", clientSSID);
+                        // Clear bad credentials so next boot doesn't retry with wrong password
+                        USER_PRINTF("[Sol BLE] Clearing failed credentials: SSID='%s'\n", clientSSID);
+                        memset(clientSSID, 0, sizeof(clientSSID));
+                        memset(clientPass, 0, sizeof(clientPass));
+                        serializeConfig();
 
                         // Defer full provisioning transition to loop() state machine.
                         // Doing this inside event callback blocks WiFi event processing and
@@ -1358,20 +1389,14 @@ private:
                         
                         USER_PRINTF("[Sol BLE] WiFi Credentials - SSID: %s, PSK: ***\n", ssid.c_str());
                         
-                        // Save credentials exactly like WLED does
-                        memset(clientSSID, 0, 33);
-                        memset(clientPass, 0, 65);
-                        strlcpy(clientSSID, ssid.c_str(), 33);
-                        strlcpy(clientPass, psk.c_str(), 65);
+                        // Store in temporary fields — only persisted on successful connection
+                        memset(_parent->_pendingSSID, 0, sizeof(_parent->_pendingSSID));
+                        memset(_parent->_pendingPass, 0, sizeof(_parent->_pendingPass));
+                        strlcpy(_parent->_pendingSSID, ssid.c_str(), sizeof(_parent->_pendingSSID));
+                        strlcpy(_parent->_pendingPass, psk.c_str(), sizeof(_parent->_pendingPass));
+                        _parent->_hasPendingCredentials = true;
                         
-                        // Trigger config save and reconnect (WLED uses these flags)
-                        doSerializeConfig = true;                        
-                        USER_PRINTLN(F("[Sol BLE] Credentials saved, reconnect scheduled"));
-                        
-                        // Don't send connecting status - let WiFi events notify success/failure
-                        // String response = "{\"status\":\"connecting\"}";
-                        // pCharacteristic->setValue((uint8_t*)response.c_str(), response.length());
-                        // pCharacteristic->notify();
+                        USER_PRINTLN(F("[Sol BLE] Credentials staged, reconnect scheduled"));
                         
                         // Set flag for main loop to handle (DON'T do blocking WiFi ops in callback!)
                         _parent->_connectRequested = true;
