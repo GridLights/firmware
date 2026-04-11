@@ -51,9 +51,16 @@
 
 // Global flag for WLED to check before retrying connection
 // Set by BLE usermod on permanent auth failures (wrong password, SSID not found)
-bool sol_ble_wifiAuthFailure = false;
+// volatile: written from WiFi event callback (WiFi task), read in loop() (Arduino task)
+volatile bool sol_ble_wifiAuthFailure = false;
 // Global flag for WLED to pause reconnect logic while LAN WiFi switch test runs
-bool sol_ble_wifiSwitchInProgress = false;
+// volatile: same cross-task access pattern as sol_ble_wifiAuthFailure
+volatile bool sol_ble_wifiSwitchInProgress = false;
+// Global flag: true when dnsServer has been started by this usermod.
+// Guards dnsServer.processNextRequest() in wled.cpp — initAP() leaves dnsServer
+// unstarted (captive portal intentionally disabled there), so we must not call
+// processNextRequest() unless we actually started it here.
+bool sol_ble_dnsActive = false;
 
 
 class SolBleUsermod : public Usermod {
@@ -113,7 +120,10 @@ public:
         strlcpy(apPass, WLED_AP_PASS, sizeof(apPass));
         USER_PRINTF("[Sol BLE] AP SSID: %s\n", apSSID);
         
-        // Register WiFi event handler for connection events
+        // Register WiFi event handler for connection events.
+        // WLED may also register a handler in wled.cpp (WLED_USE_ETHERNET path).
+        // Both handlers fire for the same events — safe because this handler only
+        // sets volatile flags that are consumed in loop() after event processing.
         WiFi.onEvent([this](WiFiEvent_t event, WiFiEventInfo_t info) {
             this->handleWiFiEvent(event, info);
         });
@@ -249,7 +259,8 @@ public:
                     // Create fresh server/service/characteristic on each BLE start.
                     // This avoids stale GATT handles after scan-driven deinit/reinit cycles.
                     _bleServer = NimBLEDevice::createServer();
-                    _bleServer->setCallbacks(new ServerCallbacks(this));
+                    if (!_serverCallbacks) _serverCallbacks = new ServerCallbacks(this);
+                    _bleServer->setCallbacks(_serverCallbacks);
                     _bleServer->advertiseOnDisconnect(false);
 
                     NimBLEService* service = _bleServer->createService(BLE_SERVICE_UUID);
@@ -257,7 +268,8 @@ public:
                         BLE_CREDENTIAL_CHAR_UUID,
                         NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY
                     );
-                    _echoChar->setCallbacks(new CharCallbacks(this));
+                    if (!_charCallbacks) _charCallbacks = new CharCallbacks(this);
+                    _echoChar->setCallbacks(_charCallbacks);
                     service->start();
                     USER_PRINTLN(F("[Sol BLE] BLE server/service created"));
 
@@ -438,6 +450,7 @@ public:
                                 server.begin();
                                 dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
                                 dnsServer.start(53, "*", WiFi.softAPIP());
+                                sol_ble_dnsActive = true;
                                 apActive = true;
                             }
                             
@@ -475,6 +488,7 @@ public:
                                 server.begin();
                                 dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
                                 dnsServer.start(53, "*", WiFi.softAPIP());
+                                sol_ble_dnsActive = true;
                                 apActive = true;
                             }
                             
@@ -805,6 +819,8 @@ private:
     ScanState _scanState = SCAN_IDLE;
     NimBLEServer* _bleServer = nullptr;
     NimBLECharacteristic* _echoChar = nullptr;
+    ServerCallbacks* _serverCallbacks = nullptr;  // lazy-init, reused across BLE cycles to avoid heap leak
+    CharCallbacks* _charCallbacks = nullptr;       // lazy-init, reused across BLE cycles to avoid heap leak
     bool _bleConnected = false;
     bool _bleDisconnected = false;
     uint32_t _bleConnectTime = 0;
@@ -1267,6 +1283,7 @@ private:
                 USER_PRINTLN(F("[Sol BLE] Stopping AP (BLE client active)"));
                 WiFi.softAPdisconnect(true);
                 ::dnsServer.stop();
+                sol_ble_dnsActive = false;
                 apActive = false;
             }
         }
@@ -1287,6 +1304,7 @@ private:
                 ::server.begin();
                 ::dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
                 ::dnsServer.start(53, "*", WiFi.softAPIP());
+                sol_ble_dnsActive = true;
                 apActive = true;
             }
         }
@@ -1338,7 +1356,7 @@ private:
                         String ssid = cmd.substring(ssidStart, ssidEnd);
                         String psk = cmd.substring(pskStart, pskEnd);
                         
-                        USER_PRINTF("[Sol BLE] WiFi Credentials - SSID: %s, PSK: %s\n", ssid.c_str(), psk.c_str());
+                        USER_PRINTF("[Sol BLE] WiFi Credentials - SSID: %s, PSK: ***\n", ssid.c_str());
                         
                         // Save credentials exactly like WLED does
                         memset(clientSSID, 0, 33);

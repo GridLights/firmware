@@ -95,7 +95,12 @@ void WLED::loop()
   #endif
   if (!realtimeMode || realtimeOverride || (realtimeMode && useMainSegmentOnly))  // block stuff if WARLS/Adalight is enabled
   {
+#ifdef USERMOD_SOL_BLE
+    extern bool sol_ble_dnsActive;
+    if (apActive && sol_ble_dnsActive) dnsServer.processNextRequest();
+#else
     if (apActive) dnsServer.processNextRequest();
+#endif
     #ifndef WLED_DISABLE_OTA
     if (WLED_CONNECTED && aOtaEnabled && !otaLock && correctPIN) ArduinoOTA.handle();
     #endif
@@ -885,7 +890,7 @@ void WLED::handleConnection()
     if (now - lastReconnectAttempt > ((stac) ? 300000 : 18000) && WLED_WIFI_CONFIGURED) {
       #ifdef USERMOD_SOL_BLE
       // Check if BLE usermod has detected auth failure - don't retry if so
-      extern bool sol_ble_wifiAuthFailure;
+      extern volatile bool sol_ble_wifiAuthFailure;
       if (sol_ble_wifiAuthFailure) {
         DEBUG_PRINTLN(F("BLE usermod auth failure - skipping reconnection attempt"));
         lastReconnectAttempt = now; // Reset timer to prevent spam
