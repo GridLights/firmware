@@ -38,7 +38,7 @@ void closeFile() {
     DEBUGFS_PRINT(F("Close -> "));
     uint32_t s = millis();
   #endif
-  f.close();
+  f.close(); // "if (f)" check is aleady done inside f.close(), and f cannot be nullptr -> no need for double checking before closing the file handle.
   DEBUGFS_PRINTF("took %d ms\n", millis() - s);
   doCloseFile = false;
 }
@@ -138,7 +138,7 @@ static bool bufferedFindObjectEnd() {
 
   if (!f || !f.size()) return false;
 
-  uint16_t objDepth = 0; //num of '{' minus num of '}'. return once 0
+  unsigned objDepth = 0; //num of '{' minus num of '}'. return once 0
   //size_t start = f.position();
   byte buf[FS_BUFSIZE];
 
@@ -226,7 +226,7 @@ bool appendObjectToFile(const char* key, JsonDocument* content, uint32_t s, uint
 
   if (pos == 0) //not found
   {
-    DEBUGFS_PRINTLN("not }");
+    DEBUGFS_PRINTLN(F("not }"));
     f.seek(0);
     while (bufferedFind("}",false)) //find last closing bracket in JSON if not last char
     {
@@ -271,9 +271,11 @@ bool writeObjectToFile(const char* file, const char* key, JsonDocument* content)
     s = millis();
   #endif
 
+  if (doCloseFile) closeFile(); // This prevents the loss of file data that is still cached in the File object.
+
   size_t pos = 0;
-  f = WLED_FS.open(file, "r+");
-  if (!f && !WLED_FS.exists(file)) f = WLED_FS.open(file, "w+");
+  char fileName[129]; strncpy_P(fileName, file, 128); fileName[128] = 0; //use PROGMEM safe copy as FS.open() does not
+  f = WLED_FS.open(fileName, WLED_FS.exists(fileName) ? "r+" : "w+");
   if (!f) {
     DEBUGFS_PRINTLN(F("Failed to open!"));
     return false;
@@ -340,7 +342,8 @@ bool readObjectFromFile(const char* file, const char* key, JsonDocument* dest)
     DEBUGFS_PRINTF("Read from %s with key %s >>>\n", file, (key==nullptr)?"nullptr":key);
     uint32_t s = millis();
   #endif
-  f = WLED_FS.open(file, "r");
+  char fileName[129]; strncpy_P(fileName, file, 128); fileName[128] = 0; //use PROGMEM safe copy as FS.open() does not
+  f = WLED_FS.open(fileName, "r");
   if (!f) return false;
 
   if (key != nullptr && !bufferedFind(key)) //key does not exist in file
@@ -375,38 +378,218 @@ void updateFSInfo() {
 }
 
 
-//Un-comment any file types you need
-static String getContentType(AsyncWebServerRequest* request, String filename){
-  if(request->hasArg("download")) return "application/octet-stream";
-  else if(filename.endsWith(".htm")) return "text/html";
-  else if(filename.endsWith(".html")) return "text/html";
-  else if(filename.endsWith(".css")) return "text/css";
-  else if(filename.endsWith(".js")) return "application/javascript";
-  else if(filename.endsWith(".json")) return "application/json";
-  else if(filename.endsWith(".png")) return "image/png";
-  else if(filename.endsWith(".gif")) return "image/gif";
-  else if(filename.endsWith(".jpg")) return "image/jpeg";
-  else if(filename.endsWith(".ico")) return "image/x-icon";
-//  else if(filename.endsWith(".xml")) return "text/xml";
-//  else if(filename.endsWith(".pdf")) return "application/x-pdf";
-//  else if(filename.endsWith(".zip")) return "application/x-zip";
-//  else if(filename.endsWith(".gz")) return "application/x-gzip";
-  return "text/plain";
+#ifdef ARDUINO_ARCH_ESP32
+// caching presets in PSRAM may prevent occasional flashes seen when HomeAssitant polls WLED
+// original idea by @akaricchi (https://github.com/Akaricchi)
+// returns a pointer to the PSRAM buffer, updates size parameter
+static const uint8_t *getPresetCache(size_t &size) {
+  static unsigned long presetsCachedTime = 0;
+  static uint8_t *presetsCached = nullptr;
+  static size_t presetsCachedSize = 0;
+  static byte presetsCachedValidate = 0;
+
+  //if (presetsModifiedTime != presetsCachedTime) DEBUG_PRINTLN(F("getPresetCache(): presetsModifiedTime changed."));
+  //if (presetsCachedValidate != cacheInvalidate) DEBUG_PRINTLN(F("getPresetCache(): cacheInvalidate changed."));
+
+  if ((presetsModifiedTime != presetsCachedTime) || (presetsCachedValidate != cacheInvalidate)) {
+    if (presetsCached) {
+      free(presetsCached);
+      presetsCached = nullptr;
+    }
+  }
+
+  if (!presetsCached) {
+    File file = WLED_FS.open(FPSTR(getPresetsFileName()), "r");
+    if (file) {
+      presetsCachedTime = presetsModifiedTime;
+      presetsCachedValidate = cacheInvalidate;
+      presetsCachedSize = 0;
+      presetsCached = (uint8_t*)ps_malloc(file.size() + 1);
+      if (presetsCached) {
+        presetsCachedSize = file.size();
+        file.read(presetsCached, presetsCachedSize);
+        presetsCached[presetsCachedSize] = 0;
+        file.close();
+      }
+    }
+  }
+
+  size = presetsCachedSize;
+  return presetsCached;
 }
+#endif
 
 bool handleFileRead(AsyncWebServerRequest* request, String path){
-  DEBUG_PRINTLN("WS FileRead: " + path);
+  DEBUG_PRINT(F("WS FileRead: ")); DEBUG_PRINTLN(path);
   if(path.endsWith("/")) path += "index.htm";
-  if(path.indexOf("sec") > -1) return false;
-  String contentType = getContentType(request, path);
-  /*String pathWithGz = path + ".gz";
-  if(WLED_FS.exists(pathWithGz)){
-    request->send(WLED_FS, pathWithGz, contentType);
-    return true;
-  }*/
-  if(WLED_FS.exists(path)) {
-    request->send(WLED_FS, path, contentType);
+  if(path.indexOf(F("sec")) > -1) return false;
+  #ifdef ARDUINO_ARCH_ESP32
+  if (psramSafe && psramFound() && path.endsWith(FPSTR(getPresetsFileName()))) {
+    size_t psize;
+    const uint8_t *presets = getPresetCache(psize);
+    if (presets) {
+      AsyncWebServerResponse *response = request->beginResponse_P(200, FPSTR(CONTENT_TYPE_JSON), presets, psize);
+      request->send(response);
+      return true;
+    }
+  }
+  #endif
+  if(WLED_FS.exists(path) || WLED_FS.exists(path + ".gz")) {
+    request->send(request->beginResponse(WLED_FS, path, {}, request->hasArg(F("download")), {}));
     return true;
   }
   return false;
 }
+
+// copy a file, delete destination file if incomplete to prevent corrupted files
+bool copyFile(const char* src_path, const char* dst_path) {
+  DEBUG_PRINTF("copyFile from %s to %s\n", src_path, dst_path);
+  if(!WLED_FS.exists(src_path)) {
+   DEBUG_PRINTLN(F("file not found"));
+   return false;
+  }
+
+  bool success = true; // is set to false on error
+  File src = WLED_FS.open(src_path, "r");
+  File dst = WLED_FS.open(dst_path, "w");
+
+  if (src && dst) {
+    uint8_t buf[128]; // copy file in 128-byte blocks
+    while (src.available() > 0) {
+      size_t bytesRead = src.read(buf, sizeof(buf));
+      if (bytesRead == 0) {
+        success = false;
+        break; // error, no data read
+      }
+      size_t bytesWritten = dst.write(buf, bytesRead);
+      if (bytesWritten != bytesRead) {
+        success = false;
+        break; // error, not all data written
+      }
+    }
+  } else {
+    success = false; // error, could not open files
+  }
+  if(src) src.close();
+  if(dst) dst.close();
+  if (!success) {
+    DEBUG_PRINTLN(F("copy failed"));
+    WLED_FS.remove(dst_path); // delete incomplete file
+  }
+  return success;
+}
+
+// compare two files, return true if identical
+bool compareFiles(const char* path1, const char* path2) {
+  DEBUG_PRINTF("compareFile %s and %s\n", path1, path2);
+  if (!WLED_FS.exists(path1) || !WLED_FS.exists(path2)) {
+    DEBUG_PRINTLN(F("file not found"));
+    return false;
+  }
+
+  bool identical = true; // set to false on mismatch
+  File f1 = WLED_FS.open(path1, "r");
+  File f2 = WLED_FS.open(path2, "r");
+
+  if (f1 && f2) {
+    uint8_t buf1[128], buf2[128];
+    while (f1.available() > 0 || f2.available() > 0) {
+      size_t len1 = f1.read(buf1, sizeof(buf1));
+      size_t len2 = f2.read(buf2, sizeof(buf2));
+
+      if (len1 != len2) {
+        identical = false;
+        break; // files differ in size or read failed
+      }
+
+      if (memcmp(buf1, buf2, len1) != 0) {
+        identical = false;
+        break; // files differ in content
+      }
+    }
+  } else {
+    identical = false; // error opening files
+  }
+
+  if (f1) f1.close();
+  if (f2) f2.close();
+  return identical;
+}
+
+static const char s_backup_fmt[] PROGMEM = "/bkp.%s";
+
+bool backupFile(const char* filename) {
+  DEBUG_PRINTF("backup %s \n", filename);
+  if (!validateJsonFile(filename)) {
+    DEBUG_PRINTLN(F("broken file"));
+    return false;
+  }
+  char backupname[32];
+  snprintf_P(backupname, sizeof(backupname), s_backup_fmt, filename + 1); // skip leading '/' in filename
+
+  if (copyFile(filename, backupname)) {
+    DEBUG_PRINTLN(F("backup ok"));
+    return true;
+  }
+  DEBUG_PRINTLN(F("backup failed"));
+  return false;
+}
+
+bool restoreFile(const char* filename) {
+  DEBUG_PRINTF("restore %s \n", filename);
+  char backupname[32];
+  snprintf_P(backupname, sizeof(backupname), s_backup_fmt, filename + 1); // skip leading '/' in filename
+
+  if (!WLED_FS.exists(backupname)) {
+    DEBUG_PRINTLN(F("no backup found"));
+    return false;
+  }
+
+  if (!validateJsonFile(backupname)) {
+    DEBUG_PRINTLN(F("broken backup"));
+    return false;
+  }
+
+  if (copyFile(backupname, filename)) {
+    DEBUG_PRINTLN(F("restore ok"));
+    return true;
+  }
+  DEBUG_PRINTLN(F("restore failed"));
+  return false;
+}
+
+bool validateJsonFile(const char* filename) {
+  if (!WLED_FS.exists(filename)) return false;
+  File file = WLED_FS.open(filename, "r");
+  if (!file) return false;
+  StaticJsonDocument<0> doc, filter; // https://arduinojson.org/v6/how-to/validate-json/
+  bool result = deserializeJson(doc, file, DeserializationOption::Filter(filter)) == DeserializationError::Ok;
+  file.close();
+  if (!result) {
+    DEBUG_PRINTF_P(PSTR("Invalid JSON file %s\n"), filename);
+  } else {
+    DEBUG_PRINTF_P(PSTR("Valid JSON file %s\n"), filename);
+  }
+  return result;
+}
+
+// print contents of all files in root dir to Serial except wsec files
+void dumpFilesToSerial() {
+  File rootdir = WLED_FS.open("/", "r");
+  File rootfile = rootdir.openNextFile();
+  while (rootfile) {
+    size_t len = strlen(rootfile.name());
+    // skip files starting with "wsec" and dont end in .json
+    if (strncmp(rootfile.name(), "wsec", 4) != 0 && len >= 6 && strcmp(rootfile.name() + len - 5, ".json") == 0) {
+      Serial.println(rootfile.name());
+      while (rootfile.available()) {
+        Serial.write(rootfile.read());
+      }
+      Serial.println();
+      Serial.println();
+    }
+    rootfile.close();
+    rootfile = rootdir.openNextFile();
+  }
+}
+
